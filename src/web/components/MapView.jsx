@@ -238,6 +238,9 @@ export default function MapView() {
         </button>
         <button className="btn !min-h-[44px] !px-4 !text-[13px] bg-white/95 text-slate-800 border border-slate-200 shadow-md" onClick={pusatkan}>📍</button>
       </div>
+      <div className="absolute bottom-3 right-3 z-[550] bg-black/60 text-white rounded-full px-3 py-1 text-[11px] font-bold backdrop-blur-sm pointer-events-none">
+        {state?.stat?.total ?? 0}jm · {state?.stat?.gelang ?? 0}⌚{(state?.stat?.sosAktif ?? 0) > 0 ? ' · 🆘' + state.stat.sosAktif : ''}
+      </div>
       {bolehKelola && (
         <div className="absolute left-3 bottom-3 z-[500] flex gap-1.5">
           <button className="h-10 px-3 rounded-xl bg-hijau text-white shadow-md text-[12.5px] font-bold" onClick={buatKumpul}>📍 Titik</button>

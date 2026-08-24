@@ -129,32 +129,7 @@ export default function App() {
           <>
           {/* RESPONSIF: peta penuh + panel bawah (HP) / grid 2 kolom (tableti & PC) */}
           <div className="flex-1 min-h-0 md:grid md:grid-cols-[380px_1fr] lg:grid-cols-[420px_1fr]">
-            <div className="relative order-1 md:order-2 flex-1 min-h-[58vh] md:min-h-0">
             <MapView />
-            {(state?.jamaah || []).some(m => m.sosAktif) && (
-              <div className="absolute top-14 left-1/2 -translate-x-1/2 z-[700] w-[92%] max-w-md">
-                <div className="bg-red-600 text-white rounded-2xl shadow-xl overflow-hidden">
-                  <button className="w-full p-2.5 flex items-center justify-between" onClick={() => setSosBuka(k => !k)}>
-                    <b className="text-[14px]">🆘 {(state.jamaah).filter(m => m.sosAktif).length} SOS AKTIF</b>
-                    <span className="text-lg">{sosBuka ? '▾' : '▸'}</span>
-                  </button>
-                  {sosBuka && <div className="bg-white text-slate-800 max-h-[240px] overflow-y-auto">
-                    {(state.jamaah).filter(m => m.sosAktif).map(m => (
-                      <div key={m.id} className="flex items-center gap-2 p-2.5 border-b border-slate-100">
-                        <div className="flex-1 min-w-0"><b className="text-[13px] block truncate">{m.nama}</b>
-                          <small className="text-slate-500">{m.regu}</small></div>
-                        <button className="btn btn-utama !min-h-[34px] !px-2.5 !text-[11px]" onClick={() => { muat(); }}>✅</button>
-                      </div>
-                    ))}
-                    <button className="w-full p-2 bg-red-50 text-red-700 font-bold text-[12px]" onClick={() => muat()}>✅ Tandai Semua Selesai</button>
-                  </div>}
-                </div>
-              </div>
-            )}
-            <div className="absolute bottom-3 right-3 z-[550] bg-black/60 text-white rounded-full px-3 py-1 text-[11px] font-bold backdrop-blur-sm">
-              {state?.stat?.total ?? 0}jm · {state?.stat?.diZona ?? 0}zona · {state?.stat?.gelang ?? 0}⌚{(state?.stat?.sosAktif ?? 0) > 0 ? ` · 🆘${state.stat.sosAktif}` : ''}
-            </div>
-          </div>
             <section className="order-2 md:order-1 p-3 space-y-3 overflow-y-auto max-h-[38vh] md:max-h-none md:border-r md:border-slate-200">
               <div className="kartu p-4">
                 <h2 className="text-[12px] font-extrabold uppercase tracking-wide text-hijau">Sesi Aktif</h2>
