@@ -187,6 +187,9 @@ export default function App() {
                         })()}
                       </div>
                       <div className="flex gap-1.5">
+                        {m.punya_gelang && m.punya_gelang && (
+                          <a className="btn btn-merah !min-h-[38px] !px-3 !text-[11.5px] animate-pulse" href={'#/radar?cari=' + encodeURIComponent(m.id)} title="Cari jamaah ini">🔍</a>
+                        )}
                         {(sesi && (sesi.peran === 'admin' || sesi.peran === 'ketrom')) && <a className="btn btn-emas !min-h-[38px] !px-3 !text-[11.5px]" href={'#/radar?pasang=' + encodeURIComponent(m.id)} title="Pasangkan gelang BLE">⌚</a>}
                         <a className="btn btn-muda !min-h-[38px] !px-3 !text-[11.5px]" href={'#/kartu/' + encodeURIComponent(m.id)}>🪪</a>
                       </div>

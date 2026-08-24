@@ -625,6 +625,28 @@ async function tangani(request, env) {
     return j({ ok: true, jamaah: (a.meta && a.meta.changes) || 0, users: (u.meta && u.meta.changes) || 0 });
   }
 
+
+  /* ---------- MODE CARI (pencarian jamaah hilang) ---------- */
+  if (path === '/api/pub/cari-mulai' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const m = b.jamaahId ? await DB.prepare('SELECT * FROM jamaah WHERE id=?').bind(String(b.jamaahId)).first() : null;
+    if (!m) return j({ ok: false, error: 'jamaah tidak ditemukan' }, 404);
+    return j({ ok: true, jamaah: { id: m.id, nama: m.nama, regu: m.regu, foto: m.foto,
+      beacon_id: m.beacon_id, punya_gelang: !!m.punya_gelang } });
+  }
+  if (path === '/api/pub/cari-selesai' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const m = b.jamaahId ? await DB.prepare('SELECT * FROM jamaah WHERE id=?').bind(String(b.jamaahId)).first() : null;
+    if (!m) return j({ ok: false, error: 'jamaah tidak ditemukan' }, 404);
+    if (!Number.isFinite(b.lat) || !Number.isFinite(b.lng)) return j({ ok: false, error: 'GPS diperlukan' }, 400);
+    const sesi = (await DB.prepare("SELECT id FROM sesi WHERE tipe='tracking' AND status='aktif' ORDER BY waktu DESC LIMIT 1").first()) || { id: 'trk1' };
+    await DB.prepare('INSERT INTO posisi (sesi_id, jamaah_id, lat, lng, akurasi, sumber, waktu) VALUES (?,?,?,?,?,?,?)')
+      .bind(sesi.id, m.id, b.lat, b.lng, 10, 'cari', nowISO()).run();
+    await DB.prepare('INSERT INTO kejadian (sesi_id, jamaah_id, tipe, zona_titik, keterangan, waktu) VALUES (?,?,?,?,?,?)')
+      .bind(sesi.id, m.id, 'ditemukan', null, `🎯 ${m.nama} DITEMUKAN oleh ${String(b.oleh || 'pencari').slice(0, 40)} via Mode Cari`, nowISO()).run();
+    return j({ ok: true, jamaah: m.nama });
+  }
+
   return j({ ok: false, error: 'endpoint tidak dikenal' }, 404);
 }
 
