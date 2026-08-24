@@ -298,6 +298,56 @@ async function tangani(request, env) {
     return j({ ok: true, event: ev, rows, total: rows.length, hadir: rows.filter(r => r.status === 'hadir').length });
   }
 
+
+  /* ---------- JAMAAH: pembaruan merge (pasangkan gelang dsb) ---------- */
+  if (path === '/api/jamaah' && method === 'PUT') {
+    if (!USER) return tolak();
+    if (!['admin', 'ketrom', 'ketua-regu'].includes(USER.peran)) return j({ ok: false, error: 'tidak diizinkan' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const ada = await DB.prepare('SELECT * FROM jamaah WHERE id=?').bind(String(b.id || '')).first();
+    if (!ada) return j({ ok: false, error: 'jamaah tidak ditemukan' }, 404);
+    if (USER.peran === 'ketua-regu' && String(ada.regu || '').trim() !== String(USER.regu || '').trim())
+      return j({ ok: false, error: 'di luar regu Anda' }, 403);
+    const val = (k, def = '') => b[k] === undefined ? (ada[k] ?? def) : b[k];
+    await DB.prepare('UPDATE jamaah SET nama=?, paspor=?, hp=?, umur=?, regu=?, hotel=?, punya_hp=?, punya_gelang=?, beacon_id=?, catatan=?, foto=? WHERE id=?')
+      .bind(String(val('nama') || 'Tanpa Nama').trim(), val('paspor'), val('hp'),
+            b.umur === undefined ? (ada.umur ?? null) : (Number(b.umur) || null),
+            val('regu'), val('hotel'),
+            b.punya_hp === undefined ? (ada.punya_hp ?? 1) : (b.punya_hp ? 1 : 0),
+            b.punya_gelang === undefined ? (ada.punya_gelang ?? 0) : (b.punya_gelang ? 1 : 0),
+            val('beacon_id'), val('catatan'),
+            b.foto === undefined ? (ada.foto || '') : b.foto, ada.id).run();
+    return j({ ok: true, beacon_id: val('beacon_id') });
+  }
+
+  /* ---------- PUBLIK: radar BLE — lapor gelang terlihat ---------- */
+  if (path === '/api/pub/ble' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    if (!b.beaconId) return j({ ok: false, error: 'beaconId wajib' }, 400);
+    const m = await DB.prepare('SELECT * FROM jamaah WHERE beacon_id=?').bind(String(b.beaconId)).first();
+    if (!m) return j({ ok: false, error: 'tag tidak terdaftar' }, 404);
+    // koordinat radar (pelapor); fallback: titik terdekat tidak diketahui -> pakai posisi terakhir? tolak bila tak ada GPS
+    if (!Number.isFinite(b.lat) || !Number.isFinite(b.lng)) return j({ ok: false, error: 'aktifkan GPS radar' }, 400);
+    const r = await catatPosisi(DB, m.id, b.lat, b.lng, 'ble');
+    await DB.prepare('INSERT INTO kejadian (sesi_id, jamaah_id, tipe, zona_titik, keterangan, waktu) VALUES (?,?,?,?,?,?)')
+      .bind('trk1', m.id, 'ble', r.titik, `Gelang terlihat radar HP${b.oleh ? ' (' + String(b.oleh).slice(0, 40) + ')' : ''}`, nowISO()).run();
+    // absensi: bila acara aktif dgn titik dan radar berada dlm radius -> jamaah hadir
+    let absensi = null;
+    const ev = await DB.prepare('SELECT * FROM absensi_event WHERE ditutup=0 ORDER BY waktu DESC LIMIT 1').first();
+    if (ev) {
+      const tt = await DB.prepare('SELECT * FROM titik WHERE id=?').bind(ev.titik_id || '').first();
+      const d = tt ? jarakM(b.lat, b.lng, tt.lat, tt.lng) : Infinity;
+      if (tt && d <= tt.radius) {
+        await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, lat, lng, waktu, oleh) VALUES (?,?,?,?,?,?,?,?)')
+          .bind(ev.id, m.id, 'hadir', 'gelang', b.lat, b.lng, nowISO(), String(b.oleh || 'radar').slice(0, 40)).run();
+        absensi = { hadir: true, acara: ev.nama, titik: tt.nama };
+      } else if (tt) {
+        absensi = { hadir: false, acara: ev.nama, titik: tt.nama, sisaMeter: Math.round(d - tt.radius) };
+      }
+    }
+    return j({ ok: true, jamaah: m.nama, titik: r.titik, absensi });
+  }
+
   return j({ ok: false, error: 'endpoint tidak dikenal' }, 404);
 }
 

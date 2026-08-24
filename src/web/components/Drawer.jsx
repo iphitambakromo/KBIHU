@@ -5,7 +5,7 @@ export default function Drawer({ open, onClose, onKeluar, sesi, rute }) {
       { l: '🗺️ Dashboard', href: '#/' },
       { l: '✅ Absensi Titik', href: '#/absensi' },
       { l: '🪪 Cetak Kartu', href: '#/cetak', khusus: sesi.peran === 'admin' || sesi.peran === 'ketrom' },
-      { l: '📡 Radar Gelang', segera: true },
+      { l: '📡 Radar Gelang', href: '#/radar' },
     ]},
     { t: 'Simulasi', items: [
       { l: '🥾 Simulasi Grup (rute)', segera: true },

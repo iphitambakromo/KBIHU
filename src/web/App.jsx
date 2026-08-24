@@ -163,13 +163,23 @@ export default function App() {
                         : <div className="w-11 h-11 rounded-xl bg-emerald-50 text-hijau grid place-items-center font-extrabold">{(m.nama || '?').replace(/^(H\.|Hj\.)\s*/, '').split(' ').slice(0, 2).map(x => x[0]).join('')}</div>}
                       <div className="flex-1 min-w-0">
                         <b className="text-[13.5px] block truncate">{m.nama}</b>
-                        <small className="text-slate-500 text-[11.5px]">
-                          {m.posisi
-                            ? `${new Date(m.posisi.waktu).toLocaleTimeString('id-ID')} · ${m.posisi.sumber === 'sos' ? '🆘' : m.posisi.sumber === 'checkin' ? '📲' : '📡'}${m.titik ? ' · di ' + m.titik : ' · di luar titik'}`
-                            : 'belum ada data'}
-                        </small>
+                        {(() => {
+                          const menit = m.posisi ? Math.max(0, Math.round((Date.now() - new Date(m.posisi.waktu)) / 60000)) : null;
+                          const lamaTakTerlihat = m.punya_gelang && menit != null && menit > 30;
+                          return <>
+                            {lamaTakTerlihat && <small className="text-merah font-extrabold text-[11px] block">⌚ 30+ menit tak terlihat — periksa!</small>}
+                            <small className="text-slate-500 text-[11.5px]">
+                              {m.posisi
+                                ? `${m.punya_gelang && !m.punya_hp ? 'terlihat ' + menit + ' mnt lalu ⌚' : new Date(m.posisi.waktu).toLocaleTimeString('id-ID') + ' · ' + (m.posisi.sumber === 'sos' ? '🆘' : m.posisi.sumber === 'checkin' ? '📲' : m.posisi.sumber === 'ble' ? '⌚' : '📡')}${m.titik ? ' · di ' + m.titik : ' · di luar titik'}`
+                                : 'belum ada data'}
+                            </small>
+                          </>;
+                        })()}
                       </div>
-                      <a className="btn btn-muda !min-h-[38px] !px-3 !text-[11.5px]" href={'#/kartu/' + encodeURIComponent(m.id)}>🪪</a>
+                      <div className="flex gap-1.5">
+                        {(sesi && (sesi.peran === 'admin' || sesi.peran === 'ketrom')) && <a className="btn btn-emas !min-h-[38px] !px-3 !text-[11.5px]" href={'#/radar?pasang=' + encodeURIComponent(m.id)} title="Pasangkan gelang BLE">⌚</a>}
+                        <a className="btn btn-muda !min-h-[38px] !px-3 !text-[11.5px]" href={'#/kartu/' + encodeURIComponent(m.id)}>🪪</a>
+                      </div>
                     </div>
                   ))}
                 </div>
