@@ -29,12 +29,13 @@ export default function MapView() {
   /* init peta sekali */
   useEffect(() => {
     if (!elRef.current || petaRef.current) return;
-    const peta = L.map(elRef.current, { zoomControl: true }).setView([-6.9932, 110.4203], 15);
+    const peta = L.map(elRef.current, { zoomControl: true, center: [-6.9932, 110.4203], zoom: 15 });
     petaRef.current = peta;
     dasarRef.current.jalan = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
     dasarRef.current.satelit = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri World Imagery' });
     (satelit ? dasarRef.current.satelit : dasarRef.current.jalan).addTo(peta);
-    setTimeout(() => peta.invalidateSize(), 150);
+    let mati = false;
+    setTimeout(() => { if (!mati) { try { peta.invalidateSize(); } catch (e) {} } }, 150);
     (async () => {
       const pos = await bacaGPS();
       sayaRef.current = { lat: pos.lat, lng: pos.lng };
@@ -43,9 +44,9 @@ export default function MapView() {
         icon: L.divIcon({ className: '', iconSize: [20, 20], iconAnchor: [10, 10],
           html: '<div class="pulse-wrap" style="--pc:#2A6FDB"><span class="pulse-ring"></span><span class="pulse-ring d2"></span><span class="pulse-core"></span></div>' })
       }).addTo(peta);
-      peta.setView([pos.lat, pos.lng], 16);
+      peta.setView([pos.lat, pos.lng], 16, { animate: false });
     })();
-    return () => { peta.remove(); petaRef.current = null; };
+    return () => { mati = true; try { peta.remove(); } catch (e) {} petaRef.current = null; };
   }, []);
 
   /* ganti lapisan */

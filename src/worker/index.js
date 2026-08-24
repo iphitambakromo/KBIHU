@@ -357,6 +357,11 @@ async function tangani(request, env) {
   }
 
   /* ---------- PUBLIK: radar BLE — lapor gelang terlihat ---------- */
+  /* peta MAC -> nama jamaah (radar publik: membedakan iTag yang namanya seragam) */
+  if (path === '/api/pub/gelang' && method === 'GET') {
+    const rows = (await DB.prepare("SELECT beacon_id, nama, regu FROM jamaah WHERE COALESCE(punya_gelang,0)=1 AND COALESCE(beacon_id,'') != ''").all()).results || [];
+    return j({ ok: true, gelang: rows.map(r => ({ mac: r.beacon_id, nama: r.nama, regu: r.regu || '' })) });
+  }
   if (path === '/api/pub/ble' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     if (!b.beaconId) return j({ ok: false, error: 'beaconId wajib' }, 400);

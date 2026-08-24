@@ -24,6 +24,42 @@ export default function RadarPage() {
   const getarRef = useRef(null);
   const bunyiRef = useRef(0);
   const [bunyiCooldown, setBunyiCooldown] = useState(0);
+  /* MAC -> nama jamaah (membedakan iTag yang namanya seragam) */
+  const [namaMap, setNamaMap] = useState({});          // mac -> {nama, regu}
+  const namaMapRef = useRef({});
+  const [pasangList, setPasangList] = useState([]);    // [{mac, rssi, pct}]
+  const [pasangScan, setPasangScan] = useState(false);
+  const pasangScanRef = useRef(null);
+  const pasangRssiRef = useRef({});                    // mac -> {rssi, t}
+  const pasangHandlerRef = useRef(null);
+  useEffect(() => { namaMapRef.current = namaMap; }, [namaMap]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const d = await fetch('/api/pub/gelang').then(r => r.json());
+        if (d.ok) { const m = {}; (d.gelang || []).forEach(g => { m[g.mac] = g; }); setNamaMap(m); }
+      } catch (e) {}
+    })();
+  }, []);
+  useEffect(() => {
+    const h = (ev) => {
+      const id = ev.device.id || ev.device.name;
+      if (!id) return;
+      const kini = Date.now();
+      const rssi = Number.isFinite(ev.rssi) ? ev.rssi : -100;
+      const st = pasangRssiRef.current;
+      if (!st[id] || rssi > st[id].rssi) st[id] = { rssi, t: kini };
+      for (const k of Object.keys(st)) if (kini - st[k].t > 4000) delete st[k];
+      const list = Object.entries(st).map(([mac, v]) => ({ mac, rssi: v.rssi, pct: rssiKePct(v.rssi) }));
+      list.sort((a, b) => b.rssi - a.rssi);
+      setPasangList(list.slice(0, 12));
+    };
+    pasangHandlerRef.current = h;
+    return () => {
+      try { navigator.bluetooth?.removeEventListener('advertisementreceived', h); } catch (e) {}
+      try { pasangScanRef.current?.stop(); } catch (e) {}
+    };
+  }, []);
 
   const tambahLog = (html, warn = false) => setLog(l => [{ html, warn, jam: new Date().toLocaleTimeString('id-ID') }, ...l].slice(0, 40));
 
@@ -166,7 +202,8 @@ export default function RadarPage() {
     const kini = Date.now();
     if (terlapor.current[id] && kini - terlapor.current[id] < 120000) return;
     terlapor.current[id] = kini;
-    tambahLog(`⏳ Melaporkan <b>${device.name || 'tag'}</b>…`);
+    const nm = namaMapRef.current[id];
+    tambahLog(`⏳ Melaporkan <b>${nm ? nm.nama : (device.name || 'tag')}</b>${nm ? ` <small class="text-slate-400">iTag …${String(id).slice(-4)}</small>` : ''}…`);
     try {
       const r = await fetch('/api/pub/ble', { method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ beaconId: id, lat: gps ? gps.lat : undefined, lng: gps ? gps.lng : undefined, oleh: 'gotong-royong', rssi }) });
@@ -229,6 +266,41 @@ export default function RadarPage() {
     setPasangInfo(d.ok ? `✅ Tersimpan: ${device.id}` : '❌ Gagal: ' + (d.error || ''));
   }
 
+  /* ===== PASANG VIA SINYAL: tanpa dialog pemilih — tag sinyal-terkuat = tag di tangan ===== */
+  async function pasangViaSinyal() {
+    if (!navigator.bluetooth?.requestLEScan) { setPasangInfo('⚠️ Butuh Chrome Android dengan Bluetooth aktif'); return; }
+    if (pasangScanRef.current) { hentiPasangSinyal(); setPasangInfo('⏹ Dihentikan'); return; }
+    try {
+      pasangScanRef.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
+      navigator.bluetooth.addEventListener('advertisementreceived', pasangHandlerRef.current);
+      setPasangScan(true);
+      setPasangInfo('📶 Dekatkan HANYA gelang jamaah ini — kunci baris teratas (sinyal terkuat).');
+    } catch (e) { setPasangInfo('⚠️ Gagal memindai — pakai tombol Manual'); }
+  }
+  const hentiPasangSinyal = () => {
+    try { pasangScanRef.current?.stop(); } catch (e) {}
+    pasangScanRef.current = null;
+    try { navigator.bluetooth?.removeEventListener('advertisementreceived', pasangHandlerRef.current); } catch (e) {}
+    setPasangScan(false); setPasangList([]); pasangRssiRef.current = {};
+  };
+  async function kunciTag(mac) {
+    if (!pasangId) return;
+    hentiPasangSinyal();
+    const sudah = namaMapRef.current[mac];
+    const pesan = (sudah && sudah.nama !== pasangNama)
+      ? `⚠️ Tag ini sudah terpasang ke ${sudah.nama}. Pindahkan ke ${pasangNama}?`
+      : `Simpan tag ini untuk ${pasangNama}?`;
+    if (!confirm(pesan)) return;
+    const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
+      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: mac }) });
+    const d = await r.json();
+    if (d.ok) {
+      setNamaMap(m => ({ ...m, [mac]: { nama: pasangNama, regu: '' } }));
+      setPasangInfo(`✅ Tersimpan: ${pasangNama} ⌚ …${String(mac).slice(-4)} — ulangi untuk jamaah berikutnya (tombol ⌚ di dashboard).`);
+      tambahLog(`⌚ <b>${pasangNama}</b> tersandingkan ke tag …${String(mac).slice(-4)}`);
+    } else setPasangInfo('❌ Gagal: ' + (d.error || ''));
+  }
+
   return (
     <div className="min-h-full bg-[#EEF3F0] p-3 pb-10 max-w-2xl mx-auto">
       <div className="bg-gradient-to-r from-hijau to-hijau2 text-white rounded-2xl p-4 text-center">
@@ -284,8 +356,37 @@ export default function RadarPage() {
       {pasangId && (
         <div className="mt-3 kartu p-4 border-2 border-hijau">
           <b className="text-hijau">⌚ Pasangkan gelang: {pasangNama}</b>
-          <button className="btn btn-utama w-full mt-2" onClick={pasangkan}>📡 Pindai & Pasangkan</button>
+          <div className="flex gap-2 mt-2">
+            <button className={`btn flex-1 !text-[13px] ${pasangScan ? 'btn-merah' : 'btn-utama'}`} onClick={pasangViaSinyal}>
+              {pasangScan ? '⏹ Hentikan Sinyal' : '📶 Pasang via Sinyal (otomatis)'}
+            </button>
+            <button className="btn btn-muda !text-[13px] !px-3" onClick={pasangkan}>📲 Manual</button>
+          </div>
+          {pasangScan && (
+            <div className="mt-3 space-y-1.5">
+              <p className="text-[11.5px] text-slate-500 font-bold">Pegang/dekatkan tag-nya — yang sinyal terkuat (baris teratas) yang dikunci:</p>
+              {pasangList.length === 0 && <p className="text-slate-400 text-[12.5px]">Mencari tag… (pastikan Bluetooth aktif & tag menyala)</p>}
+              {pasangList.map((t, i) => {
+                const nm = namaMap[t.mac];
+                return (
+                  <div key={t.mac} className={`flex items-center gap-2 border rounded-xl p-2 ${i === 0 ? 'border-hijau bg-emerald-50' : 'border-slate-200'}`}>
+                    <div className="flex-1 min-w-0">
+                      <b className="text-[13px] block truncate">{i === 0 ? '🎯 ' : ''}{nm ? nm.nama : 'Tag baru'}</b>
+                      <small className="text-slate-500 text-[11px]">iTag …{String(t.mac).slice(-4)} · {t.rssi} dBm{nm && nm.regu ? ' · ' + nm.regu : ''}</small>
+                    </div>
+                    <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
+                      <div className={`h-full ${t.pct > 60 ? 'bg-emerald-500' : t.pct > 30 ? 'bg-amber-400' : 'bg-blue-400'}`} style={{ width: t.pct + '%' }} />
+                    </div>
+                    <button className="btn btn-utama !min-h-[36px] !px-2.5 !text-[12px]" onClick={() => kunciTag(t.mac)}>🔒</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {pasangInfo && <p className="text-[12.5px] mt-2 font-bold">{pasangInfo}</p>}
+          <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
+            Semua iTag bernama sama? Tidak masalah — sistem memakai MAC-nya. Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda.
+          </p>
         </div>
       )}
 
