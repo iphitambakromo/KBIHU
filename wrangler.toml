@@ -10,4 +10,4 @@ not_found_handling = "single-page-application"
 [[d1_databases]]
 binding = "DB"
 database_name = "iphi-db"
-database_id = "b1e2c3d4-0000-4000-8000-2f6a9c0d7e11"
+database_id = "629f4c4c-90e9-4d07-8e30-b78725c8c06b"
