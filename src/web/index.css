@@ -16,6 +16,12 @@ body { @apply bg-[#EEF3F0] text-slate-900 antialiased; font-family: var(--font-s
 
 .leaflet-container { font: inherit; }
 .leaflet-tooltip { pointer-events: none !important; }
+
+/* chip nama jamaah di kartu titik: sudah di titik = hijau, belum = merah */
+.chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700;
+  border: 1px solid #E2E8F0; background: #F8FAFC; color: #334155; white-space: nowrap; }
+.chip.c-ok { background: #ECFDF5; border-color: #6EE7B7; color: #047857; }
+.chip.c-belum { background: #FEF2F2; border-color: #FCA5A5; color: #B4232A; }
 .lbl-titik { pointer-events: none;  font-size: 11px; font-weight: 800; background: rgba(255,255,255,.92); padding: 2px 6px; border-radius: 6px; white-space: nowrap; }
 
 /* tombol dasar besar & jempol */

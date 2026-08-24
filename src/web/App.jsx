@@ -57,7 +57,6 @@ export default function App() {
   const [state, setState] = useState(null);            // data dashboard
   const [drawer, setDrawer] = useState(false);
   const [rute, setRute] = useState((location.hash || '#/').replace('#/', ''));
-  const [sosBuka, setSosBuka] = useState(false);
   useEffect(() => {
     const fn = () => { setRute((location.hash || '#/').replace('#/', '')); setDrawer(false); };
     window.addEventListener('hashchange', fn);
@@ -99,6 +98,16 @@ export default function App() {
     localStorage.removeItem('iphi_tok'); location.reload();
   };
 
+  const gantiNamaTitik = async (t) => {
+    const nama = prompt(`Ganti nama titik "${t.nama}":`, t.nama);
+    if (nama === null) return;
+    const v = nama.trim();
+    if (!v) { tampilToast('Nama tidak boleh kosong', true); return; }
+    const r = await api('/api/titik', { method: 'PUT', body: JSON.stringify({ id: t.id, nama: v }) });
+    if (r.ok) { tampilToast(`✏️ → "${v}"`); muat(); }
+    else tampilToast('Gagal: ' + (r.error || ''), true);
+  };
+
   const bolehKelola = sesi && ['admin', 'ketrom', 'ketua-regu'].includes(sesi.peran);
 
   return (
@@ -128,7 +137,7 @@ export default function App() {
           ) : (
           <>
           {/* RESPONSIF: peta penuh + panel bawah (HP) / grid 2 kolom (tableti & PC) */}
-          <div className="flex-1 min-h-0 md:grid md:grid-cols-[380px_1fr] lg:grid-cols-[420px_1fr]">
+          <div className="flex-1 min-h-0 md:grid md:grid-rows-[minmax(0,1fr)] md:grid-cols-[380px_1fr] lg:grid-cols-[420px_1fr]">
             <MapView />
             <section className="order-2 md:order-1 p-3 space-y-3 overflow-y-auto max-h-[38vh] md:max-h-none md:border-r md:border-slate-200">
               <div className="kartu p-4">
@@ -157,8 +166,12 @@ export default function App() {
                         <small className="text-slate-500">radius {t.radius} m · oleh {t.dibuat_oleh}</small>
                       </div>
                       {bolehKelola && (
-                        <button className="btn btn-emas !min-h-[42px] !px-3 !text-[12px]"
-                                onClick={async () => { await api('/api/titik?id=' + encodeURIComponent(t.id), { method: 'DELETE' }); muat(); tampilToast('🗑️ Titik dihapus'); }}>🗑️</button>
+                        <>
+                          <button className="btn btn-muda !min-h-[42px] !px-3 !text-[12px]" title="Ganti nama"
+                                  onClick={() => gantiNamaTitik(t)}>✏️</button>
+                          <button className="btn btn-emas !min-h-[42px] !px-3 !text-[12px]"
+                                  onClick={async () => { await api('/api/titik?id=' + encodeURIComponent(t.id), { method: 'DELETE' }); muat(); tampilToast('🗑️ Titik dihapus'); }}>🗑️</button>
+                        </>
                       )}
                     </div>
                   ))}

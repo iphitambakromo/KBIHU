@@ -33,6 +33,8 @@ async function tangani(request, env) {
   const DB = env.DB;
   if (!path.startsWith('/api/')) return env.ASSETS.fetch(request);
 
+
+
   /* ---------- SEED (idempoten) ---------- */
   if (path === '/api/seed' && method === 'POST') { await seed(DB); return j({ ok: true }); }
 
@@ -89,15 +91,20 @@ async function tangani(request, env) {
     const sesi = (await DB.prepare("SELECT * FROM sesi WHERE tipe='tracking' AND status='aktif' ORDER BY waktu DESC LIMIT 1").first())
       || { id: 'trk1', nama: 'Tracking Rombongan' };
     const titik = (await DB.prepare('SELECT * FROM titik WHERE sesi_id=? ORDER BY waktu DESC').bind(sesi.id).all()).results || [];
+    // SOS aktif: satu query tanpa bind (menghindari bug shim D1 lokal utk query bind pada kejadian dlm request campuran; juga lebih efisien)
+    const sosAktifMap = {};
+    for (const r of (await DB.prepare("SELECT jamaah_id, id FROM kejadian WHERE tipe='sos' AND ditangani=0").all()).results || []) {
+      if (r.jamaah_id) sosAktifMap[r.jamaah_id] = r.id;
+    }
     const jmFinal = [];
     for (const m of jamaah) {
       const p = (await DB.prepare('SELECT lat, lng, sumber, waktu FROM posisi WHERE jamaah_id=? ORDER BY id DESC LIMIT 1').bind(m.id).first());
       const dm = p ? dalamTitikMana(titik, p.lat, p.lng) : null;
-      const sosTerbaru = (await DB.prepare("SELECT id FROM kejadian WHERE jamaah_id=? AND tipe='sos' AND ditangani=0 ORDER BY id DESC LIMIT 1").bind(m.id)).first();
+      const sosId = sosAktifMap[m.id] || null;
       jmFinal.push({ ...m, punya_hp: !!m.punya_hp, punya_gelang: !!m.punya_gelang,
         posisi: p ? { lat: p.lat, lng: p.lng, sumber: p.sumber, waktu: p.waktu } : null,
         titik: dm ? dm.t.nama : null,
-        sosAktif: !!(sosTerbaru && sosTerbaru.id), _sosId: sosTerbaru ? sosTerbaru.id : null });
+        sosAktif: !!sosId, _sosId: sosId });
     }
     const kejadian = (await DB.prepare('SELECT k.*, j.nama FROM kejadian k LEFT JOIN jamaah j ON j.id=k.jamaah_id WHERE k.sesi_id=? ORDER BY k.id DESC LIMIT 20').bind(sesi.id).all()).results || [];
     return j({ ok: true, sesi, titik, jamaah: jmFinal,
@@ -118,7 +125,8 @@ async function tangani(request, env) {
     const b = await request.json().catch(() => ({}));
     if (!Number.isFinite(b.lat) || !Number.isFinite(b.lng)) return j({ ok: false, error: 'koordinat diperlukan' }, 400);
     const id = idAcak('tk');
-    const nama = String(b.nama || `Titik Kumpul ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`).slice(0, 60);
+    const jam = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    const nama = String(b.nama || (b.tipe === 'tujuan' ? `Titik Tujuan ${jam}` : `Titik Kumpul ${jam}`)).slice(0, 60);
     const radius = Number.isFinite(Number(b.radius)) && Number(b.radius) >= 20 ? Math.round(Number(b.radius)) : 100;
     await DB.prepare('INSERT INTO titik (id, sesi_id, nama, tipe, lat, lng, radius, warna, dibuat_oleh, waktu) VALUES (?,?,?,?,?,?,?,?,?,?)')
       .bind(id, b.sesiId || 'trk1', nama, b.tipe === 'tujuan' ? 'tujuan' : 'kumpul', b.lat, b.lng, radius, b.warna || (b.tipe === 'tujuan' ? '#B48A2F' : '#0E7490'), USER.username, nowISO()).run();
@@ -219,6 +227,32 @@ async function tangani(request, env) {
     const r = await catatPosisi(DB, m.id, lat, lng, 'sos');
     const wk = await waKetua(m.regu);
     return j({ ok: true, jamaah: m.nama, regu: m.regu, titik: r.titik, waKetua: wk ? wk.wa : '', waKetuaNama: wk ? wk.nama : '' });
+  }
+
+  /* auth: tandai SOS selesai (per jamaah / semua) */
+  if (path === '/api/sos/selesai' && method === 'POST') {
+    if (!USER) return tolak();
+    if (!bolehKelola()) return j({ ok: false, error: 'hanya Admin / KaRom / KaRu' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const tutupSatu = async (jid) => {
+      const r = await DB.prepare("UPDATE kejadian SET ditangani=1 WHERE jamaah_id=? AND tipe='sos' AND ditangani=0").bind(String(jid)).run();
+      return (r.meta && r.meta.changes) || 0;
+    };
+    let n = 0;
+    if (b.jamaahId) {
+      if (USER.peran === 'ketua-regu') {
+        const m = await DB.prepare('SELECT regu FROM jamaah WHERE id=?').bind(String(b.jamaahId)).first();
+        if (m && String(m.regu || '').trim() !== String(USER.regu || '').trim()) return j({ ok: false, error: 'di luar regu Anda' }, 403);
+      }
+      n = await tutupSatu(b.jamaahId);
+    } else if (USER.peran === 'ketua-regu') {
+      const milik = (await DB.prepare("SELECT id FROM jamaah WHERE TRIM(COALESCE(regu,''))=?").bind(String(USER.regu || '').trim()).all()).results || [];
+      for (const x of milik) n += await tutupSatu(x.id);
+    } else {
+      const r = await DB.prepare("UPDATE kejadian SET ditangani=1 WHERE tipe='sos' AND ditangani=0").run();
+      n = (r.meta && r.meta.changes) || 0;
+    }
+    return j({ ok: true, selesai: n });
   }
 
   /* ---------- ABSENSI (terikat titik) ---------- */

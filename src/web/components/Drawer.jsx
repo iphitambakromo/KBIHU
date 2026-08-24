@@ -30,10 +30,12 @@ export default function Drawer({ open, onClose, onKeluar, sesi, rute }) {
           <button className="w-11 h-11 rounded-xl bg-white/20 text-lg" onClick={onClose} aria-label="Tutup">✕</button>
         </div>
         <nav className="flex-1 overflow-y-auto p-3">
-          {grup.map(g => (
+          {(() => {
+            const boleh = x => (x.href || x.segera) && (x.khusus === undefined || x.khusus);
+            return grup.filter(g => g.items.some(boleh)).map(g => (
             <div key={g.t}>
               <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 px-3 pt-4 pb-1">{g.t}</p>
-              {g.items.filter(x => x.href || x.segera).filter(x => !x.khusus || x.khusus).map(x => x.href ? (
+              {g.items.filter(boleh).map(x => x.href ? (
                 <a key={x.l} href={x.href}
                   className={`w-full text-left rounded-xl px-3.5 py-3.5 text-[15px] font-bold min-h-[54px] flex items-center
                     ${('#/' + rute) === x.href || (x.href === '#/' && rute === '') ? 'bg-emerald-50 text-hijau' : 'text-slate-700 hover:bg-emerald-50'}`}>{x.l}</a>
@@ -45,7 +47,8 @@ export default function Drawer({ open, onClose, onKeluar, sesi, rute }) {
                 </button>
               ))}
             </div>
-          ))}
+            ))
+          })()}
         </nav>
         <button className="btn btn-merah m-3" onClick={onKeluar}>🚪 Keluar</button>
       </aside>

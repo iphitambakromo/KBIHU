@@ -20,6 +20,7 @@ export default function MapView() {
   const [satelit, setSatelit] = useState(localStorage.getItem('iphi_peta') === 'satelit');
   const [modeTitik, setModeTitik] = useState(false);
   const [titikAktifAcara, setTitikAktifAcara] = useState('');
+  const [sosBuka, setSosBuka] = useState(false);
   const sayaRef = useRef(null);
   const titikRef = useRef({});        // id -> {circle, label}
   const lastTitikKey = useRef('');
@@ -178,6 +179,10 @@ export default function MapView() {
           const r = await api('/api/titik', { method: 'PUT', body: JSON.stringify({ id: t.id, radius: rad, sumber: 'kartu' }) });
           if (r.ok) { tampilToast(`📏 Radius → ${rad} m`); muat(); peta.closePopup(); }
         });
+        tombol('✏️ Nama', 'btn-muda', async () => {
+          peta.closePopup();
+          await ubahNamaTitik(t);
+        });
         tombol('🗑️', 'btn-emas', async () => {
           if (!confirm(`Hapus titik "${t.nama}"?`)) return;
           await api('/api/titik?id=' + encodeURIComponent(t.id), { method: 'DELETE' });
@@ -191,13 +196,26 @@ export default function MapView() {
 
   /* tombol titik kumpul cepat */
   const buatKumpul = async () => {
+    const waktu = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    const nama = prompt('Nama titik kumpul:', `Titik Kumpul ${waktu}`);
+    if (nama === null) return;
     const pos = await bacaGPS(12000, true);
-    const d = await api('/api/titik', { method: 'POST', body: JSON.stringify({ lat: pos.lat, lng: pos.lng, radius: 100, tipe: 'kumpul', sumber: 'cepat' }) });
+    const d = await api('/api/titik', { method: 'POST', body: JSON.stringify({ lat: pos.lat, lng: pos.lng, radius: 100, tipe: 'kumpul', nama: nama.trim(), sumber: 'cepat' }) });
     if (d.ok) {
       muat();
       petaRef.current?.flyTo([pos.lat, pos.lng], 16);
       tampilToast(`📍 "${d.titik.nama}" dibuat di posisi Anda (radius 100 m)`);
     } else tampilToast('Gagal: ' + (d.error || ''), true);
+  };
+
+  const ubahNamaTitik = async (t) => {
+    const nama = prompt(`Ganti nama titik "${t.nama}":`, t.nama);
+    if (nama === null) return;
+    const v = nama.trim();
+    if (!v) { tampilToast('Nama tidak boleh kosong', true); return; }
+    const r = await api('/api/titik', { method: 'PUT', body: JSON.stringify({ id: t.id, nama: v }) });
+    if (r.ok) { tampilToast(`✏️ → "${v}"`); muat(); }
+    else tampilToast('Gagal: ' + (r.error || ''), true);
   };
 
   const mulaiTitikPeta = () => {
@@ -228,8 +246,15 @@ export default function MapView() {
     petaRef.current?.flyTo([pos.lat, pos.lng], 17);
   };
 
+  const sosList = (state?.jamaah || []).filter(m => m.sosAktif);
+  const selesaiSos = async (jamaahId) => {
+    const r = await api('/api/sos/selesai', { method: 'POST', body: JSON.stringify(jamaahId ? { jamaahId } : {}) });
+    if (r.ok) { tampilToast(jamaahId ? '✅ SOS ditandai selesai' : `✅ ${r.selesai} SOS ditandai selesai`); muat(); }
+    else tampilToast('Gagal: ' + (r.error || ''), true);
+  };
+
   return (
-    <div className={`order-1 md:order-2 relative flex-1 min-h-[58vh] md:min-h-0 ${modeTitik ? 'mode-titik' : ''}`}>
+    <div className={`order-1 md:order-2 relative flex-1 h-full min-h-[58vh] md:min-h-0 ${modeTitik ? 'mode-titik' : ''}`}>
       <div ref={elRef} id="peta-utama" className="absolute inset-0 z-0" />
       {modeTitik && <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[600] bg-slate-900/85 text-white font-bold text-[12.5px] px-4 py-2 rounded-full shadow-lg pointer-events-none">🗺️ Ketuk lokasi di peta… (Esc = batal)</div>}
       <div className="absolute top-3 right-3 z-[500] flex gap-2">
@@ -238,6 +263,30 @@ export default function MapView() {
         </button>
         <button className="btn !min-h-[44px] !px-4 !text-[13px] bg-white/95 text-slate-800 border border-slate-200 shadow-md" onClick={pusatkan}>📍</button>
       </div>
+      {sosList.length > 0 && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[700] w-[94%] max-w-md">
+          <div className="bg-merah text-white rounded-2xl shadow-xl overflow-hidden animate-pulse-slow">
+            <button className="w-full p-2.5 flex items-center justify-between" onClick={() => setSosBuka(k => !k)}>
+              <b className="text-[14px]">🆘 {sosList.length} SOS AKTIF</b>
+              <span className="text-lg">{sosBuka ? '▾' : '▸'}</span>
+            </button>
+            {sosBuka && (
+              <div className="bg-white text-slate-800 max-h-[240px] overflow-y-auto">
+                {sosList.map(m => (
+                  <div key={m.id} className="flex items-center gap-2 p-2.5 border-b border-slate-100">
+                    <div className="flex-1 min-w-0">
+                      <b className="text-[13px] block truncate">{m.nama}</b>
+                      <small className="text-slate-500">{m.regu || '-'}{m.posisi ? ' · ' + new Date(m.posisi.waktu).toLocaleTimeString('id-ID') : ''}</small>
+                    </div>
+                    <button className="btn btn-utama !min-h-[34px] !px-2.5 !text-[11px]" onClick={() => selesaiSos(m.id)}>✅ Selesai</button>
+                  </div>
+                ))}
+                <button className="w-full p-2 bg-red-50 text-red-700 font-bold text-[12px]" onClick={() => selesaiSos(null)}>✅ Tandai Semua Selesai</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       <div className="absolute bottom-3 right-3 z-[550] bg-black/60 text-white rounded-full px-3 py-1 text-[11px] font-bold backdrop-blur-sm pointer-events-none">
         {state?.stat?.total ?? 0}jm · {state?.stat?.gelang ?? 0}⌚{(state?.stat?.sosAktif ?? 0) > 0 ? ' · 🆘' + state.stat.sosAktif : ''}
       </div>
