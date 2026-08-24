@@ -1,6 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 
+/* Deteksi browser utk pesan panduan (scan BLE cuma ada di Chrome Android) */
+const deteksiBrowser = (() => {
+  const ua = navigator.userAgent || '';
+  const v = (re) => { const m = ua.match(re); return m ? m[1].split('.')[0] : ''; };
+  let nama = 'browser tidak dikenal';
+  if (ua.includes('Edg/')) nama = 'Edge ' + v(/Edg\/([\d.]+)/);
+  else if (ua.includes('SamsungBrowser/')) nama = 'Samsung Internet ' + v(/SamsungBrowser\/([\d.]+)/);
+  else if (ua.includes('Brave')) nama = 'Brave';
+  else if (ua.includes('OPR/')) nama = 'Opera ' + v(/OPR\/([\d.]+)/);
+  else if (ua.includes('UCBrowser') || ua.includes('UBrowser')) nama = 'UC Browser';
+  else if (ua.includes('Chrome/')) nama = 'Chrome ' + v(/Chrome\/([\d.]+)/);
+  else if (ua.includes('Firefox/')) nama = 'Firefox ' + v(/Firefox\/([\d.]+)/);
+  else if (ua.includes('Safari/')) nama = 'Safari';
+  const plat = ua.includes('Android') ? 'Android' : ua.includes('Windows') ? 'Windows (PC/laptop)' : ua.includes('iPhone') ? 'iOS (iPhone)' : ua.includes('Mac') ? 'macOS' : ua.includes('Linux') ? 'Linux' : '';
+  return nama + (plat ? ' di ' + plat : '');
+})();
+
 /* Radar Gelang — publik. Mode Cari: getar panas-dingin + bar sinyal + bunyikan gelang. */
 export default function RadarPage() {
   const hash = location.hash || '';
@@ -254,6 +271,7 @@ export default function RadarPage() {
 
   async function mulaiPindai() {
     if (!navigator.bluetooth) { tambahLog('Gunakan Chrome Android', true); return; }
+    if (!navigator.bluetooth.requestLEScan) { tambahLog(`⚠️ ${deteksiBrowser} tidak mendukung scan — buka radar di Chrome Android, atau pakai 📲 Pilih Tag`, true); return; }
     if (scanHandle.current) { scanHandle.current.stop(); scanHandle.current = null; setScanAktif(false); tambahLog('⏹ Dihentikan'); return; }
     try {
       scanHandle.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
@@ -283,7 +301,7 @@ export default function RadarPage() {
 
   /* ===== PASANG VIA SINYAL: tanpa dialog pemilih — tag sinyal-terkuat = tag di tangan ===== */
   async function pasangViaSinyal() {
-    if (!navigator.bluetooth?.requestLEScan) { setPasangInfo('⚠️ Browser ini tidak mendukung scan sinyal — pakai 📲 Manual'); return; }
+    if (!navigator.bluetooth?.requestLEScan) { setPasangInfo(`⚠️ ${deteksiBrowser} tidak mendukung scan sinyal — buka radar ini di Chrome Android. Sementara bisa pakai 📲 Manual.`); return; }
     if (pasangScanRef.current) { hentiPasangSinyal(); setPasangInfo('⏹ Dihentikan'); return; }
     try {
       pasangScanRef.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
@@ -334,6 +352,13 @@ export default function RadarPage() {
         <h1 className="font-extrabold text-[17px]">📡 Radar Gelang BLE</h1>
         <p className="text-white/85 text-[12px] mt-1">Deteksi gelang jamaah ±25 m — tercatat ke dashboard & absensi.</p>
       </div>
+
+      {!navigator.bluetooth?.requestLEScan && (
+        <div className="mt-3 bg-amber-50 border-2 border-amber-300 rounded-2xl p-3">
+          <b className="text-amber-700 text-[13px]">⚠️ {deteksiBrowser} tidak mendukung scan Bluetooth.</b>
+          <p className="text-[12px] text-slate-600 mt-1">Pindai Otomatis & Pasang via Sinyal hanya jalan di <b>Chrome Android</b>. Di browser ini tetap bisa: 📲 pasang manual & 📲 pilih tag manual.</p>
+        </div>
+      )}
 
       {/* ===== MODE CARI ===== */}
       {cari && (
