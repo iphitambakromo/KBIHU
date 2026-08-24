@@ -119,7 +119,7 @@ async function tangani(request, env) {
     const nama = String(b.nama || `Titik Kumpul ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}`).slice(0, 60);
     const radius = Number.isFinite(Number(b.radius)) && Number(b.radius) >= 20 ? Math.round(Number(b.radius)) : 100;
     await DB.prepare('INSERT INTO titik (id, sesi_id, nama, tipe, lat, lng, radius, warna, dibuat_oleh, waktu) VALUES (?,?,?,?,?,?,?,?,?,?)')
-      .bind(id, b.sesiId || 'trk1', nama, b.tipe === 'tujuan' ? 'tujuan' : 'kumpul', b.lat, b.lng, radius, b.warna || '#0E7490', USER.username, nowISO()).run();
+      .bind(id, b.sesiId || 'trk1', nama, b.tipe === 'tujuan' ? 'tujuan' : 'kumpul', b.lat, b.lng, radius, b.warna || (b.tipe === 'tujuan' ? '#B48A2F' : '#0E7490'), USER.username, nowISO()).run();
     await DB.prepare('INSERT INTO kalibrasi (waktu, jenis, ref_id, nama, lat, lng, radius, sumber, oleh) VALUES (?,?,?,?,?,?,?,?,?)')
       .bind(nowISO(), 'titik', id, nama, b.lat, b.lng, radius, b.sumber || 'cepat', USER.username).run();
     const t = await DB.prepare('SELECT * FROM titik WHERE id=?').bind(id).first();
