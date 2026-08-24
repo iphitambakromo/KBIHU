@@ -10,6 +10,7 @@ import ProgresPage from './pages/ProgresPage.jsx';
 import KelolaPage from './pages/KelolaPage.jsx';
 import PenggunaPage from './pages/PenggunaPage.jsx';
 import DiagPage from './pages/DiagPage.jsx';
+import PengaturanPage from './pages/PengaturanPage.jsx';
 
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
@@ -119,6 +120,7 @@ export default function App() {
             : rute === 'kelola' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><KelolaPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
             : rute === 'pengguna' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><PenggunaPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
             : rute === 'diag' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><DiagPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
+            : rute === 'pengaturan' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><PengaturanPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
             : rute === 'cetak' ? (
             sesi.peran === 'admin' || sesi.peran === 'ketrom' ? <div className="flex-1 overflow-y-auto"><CetakPage /></div>
             : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin / KaRom</div>

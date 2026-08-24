@@ -99,10 +99,12 @@ export default function PenggunaPage() {
               <option value="ketrom">🧭 Ketua Rombongan (KaRom)</option>
               <option value="admin">🛂 Admin</option>
             </select>
-            {form.peran === 'ketua-regu' && <><label className="text-[12px] font-bold text-slate-500 block mt-2">Regu yang diawasi * <small className="text-slate-400 normal-case font-normal">(pilih dari daftar = sama persis dgn regu jamaah)</small></label>
-              <input className="input" list="daftar-regu-user" value={form.regu} onChange={e => setForm({ ...form, regu: e.target.value })} placeholder="pilih dari daftar" />
-              <datalist id="daftar-regu-user">{regu.map(r => <option key={r} value={r} />)}</datalist>
-              {regu.length > 0 && <small className="text-slate-400 text-[11px]">Regu terdaftar: {regu.join(' · ')}</small>}</>}
+            {form.peran === 'ketua-regu' && <><label className="text-[12px] font-bold text-slate-500 block mt-2">Regu yang diawasi * <small className="text-slate-400 normal-case font-normal">(daftar resmi dikelola di ⚙️ Pengaturan)</small></label>
+              <select className="input" value={form.regu} onChange={e => setForm({ ...form, regu: e.target.value })}>
+                <option value="">— pilih regu —</option>
+                {regu.map(r => <option key={r} value={r}>{r}</option>)}
+                {form.regu && !regu.includes(form.regu) && <option value={form.regu}>{form.regu} (lama)</option>}
+              </select></>}
             <label className="text-[12px] font-bold text-slate-500 block mt-2">Nomor WhatsApp</label>
             <input className="input" value={form.wa} onChange={e => setForm({ ...form, wa: e.target.value })} placeholder="0812-3456-7890" />
             <label className="text-[12px] font-bold text-slate-500 block mt-2">Foto (kamera / galeri, dikompres otomatis)</label>

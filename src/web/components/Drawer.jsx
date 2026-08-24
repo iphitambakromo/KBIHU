@@ -11,6 +11,7 @@ export default function Drawer({ open, onClose, onKeluar, sesi, rute }) {
     { t: 'Pengaturan', items: [
       { l: '🛂 Kelola Jamaah', href: '#/kelola', khusus: sesi.peran === 'admin' },
       { l: '👥 Pengguna', href: '#/pengguna', khusus: sesi.peran === 'admin' },
+      { l: '⚙️ Pengaturan (Regu)', href: '#/pengaturan', khusus: sesi.peran === 'admin' },
       { l: '🛠 Diagnostik', href: '#/diag', khusus: sesi.peran === 'admin' },
     ]},
   ];

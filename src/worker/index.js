@@ -547,13 +547,72 @@ async function tangani(request, env) {
   }
 
 
-  /* ---------- DAFTAR REGU (anti-typo) + padankan ---------- */
-  if (path === '/api/regu' && method === 'GET') {
-    if (!USER) return tolak();
+  /* ---------- REFERENSI REGU (Pengaturan) ---------- */
+  const daftarReguRef = async () => {
+    const ref = (await DB.prepare('SELECT * FROM regu_ref ORDER BY urutan, nama').all()).results || [];
+    if (ref.length) return ref;
+    // fallback bila referensi belum terisi: kumpulkan dari data
     const set = new Set();
     (await DB.prepare("SELECT DISTINCT regu FROM jamaah WHERE TRIM(COALESCE(regu,'')) != ''").all()).results.forEach(r => set.add(r.regu.trim()));
     (await DB.prepare("SELECT DISTINCT regu FROM users WHERE TRIM(COALESCE(regu,'')) != ''").all()).results.forEach(r => set.add(r.regu.trim()));
-    return j({ ok: true, regu: [...set].sort() });
+    return [...set].sort().map((nama, i) => ({ id: 'rg' + i, nama, urutan: i }));
+  };
+  if (path === '/api/regu' && method === 'GET') {
+    if (!USER) return tolak();
+    const ref = await daftarReguRef();
+    return j({ ok: true, regu: ref.map(r => r.nama) });
+  }
+  if (path === '/api/pengaturan/regu' && method === 'GET') {
+    if (!USER) return tolak();
+    const ref = await daftarReguRef();
+    const out = [];
+    for (const r of ref) {
+      const jm = (await DB.prepare('SELECT COUNT(*) c FROM jamaah WHERE TRIM(COALESCE(regu,\'\'))=?').bind(r.nama).first()).c;
+      const us = (await DB.prepare('SELECT COUNT(*) c FROM users WHERE TRIM(COALESCE(regu,\'\'))=?').bind(r.nama).first()).c;
+      out.push({ ...r, jamaah: jm, users: us });
+    }
+    return j({ ok: true, regu: out });
+  }
+  if (path === '/api/pengaturan/regu' && method === 'POST') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const nama = String(b.nama || '').trim();
+    if (!nama) return j({ ok: false, error: 'nama regu wajib' }, 400);
+    const ada = await DB.prepare('SELECT id FROM regu_ref WHERE nama=?').bind(nama).first();
+    if (ada) return j({ ok: false, error: 'nama regu sudah ada' }, 400);
+    const maks = (await DB.prepare('SELECT COALESCE(MAX(urutan),0) m FROM regu_ref').first()).m;
+    await DB.prepare('INSERT INTO regu_ref (id, nama, urutan, waktu) VALUES (?,?,?,?)')
+      .bind(idAcak('rg'), nama, maks + 1, nowISO()).run();
+    return j({ ok: true, nama });
+  }
+  if (path === '/api/pengaturan/regu' && method === 'PUT') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const r = await DB.prepare('SELECT * FROM regu_ref WHERE id=?').bind(String(b.id || '')).first();
+    if (!r) return j({ ok: false, error: 'regu tidak ditemukan' }, 404);
+    const baru = String(b.nama || '').trim();
+    if (!baru || baru === r.nama) return j({ ok: false, error: 'isi nama baru (berbeda)' }, 400);
+    const bentrok = await DB.prepare('SELECT id FROM regu_ref WHERE nama=? AND id != ?').bind(baru, r.id).first();
+    if (bentrok) return j({ ok: false, error: 'nama itu sudah dipakai regu lain' }, 400);
+    await DB.prepare('UPDATE regu_ref SET nama=? WHERE id=?').bind(baru, r.id).run();
+    // CASCADE: nama baru menular ke jamaah & KaRu otomatis
+    const a = await DB.prepare('UPDATE jamaah SET regu=? WHERE TRIM(COALESCE(regu,\'\'))=?').bind(baru, r.nama).run();
+    const u = await DB.prepare('UPDATE users SET regu=? WHERE TRIM(COALESCE(regu,\'\'))=?').bind(baru, r.nama).run();
+    return j({ ok: true, nama: baru, jamaah: (a.meta && a.meta.changes) || 0, users: (u.meta && u.meta.changes) || 0 });
+  }
+  if (path === '/api/pengaturan/regu' && method === 'DELETE') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const id = url.searchParams.get('id') || '';
+    const r = await DB.prepare('SELECT * FROM regu_ref WHERE id=?').bind(id).first();
+    if (!r) return j({ ok: false, error: 'regu tidak ditemukan' }, 404);
+    const jm = (await DB.prepare('SELECT COUNT(*) c FROM jamaah WHERE TRIM(COALESCE(regu,\'\'))=?').bind(r.nama).first()).c;
+    const us = (await DB.prepare('SELECT COUNT(*) c FROM users WHERE TRIM(COALESCE(regu,\'\'))=?').bind(r.nama).first()).c;
+    if (jm + us > 0) return j({ ok: false, error: `masih dipakai ${jm} jamaah & ${us} pengguna — pindahkan/padankan dulu` }, 400);
+    await DB.prepare('DELETE FROM regu_ref WHERE id=?').bind(id).run();
+    return j({ ok: true });
   }
   if (path === '/api/regu/rename' && method === 'POST') {
     if (!USER) return tolak();

@@ -8,7 +8,6 @@ export default function KelolaPage() {
   const { tampilToast } = useApp();
   const [rows, setRows] = useState([]);
   const [regu, setRegu] = useState([]);          // daftar regu (anti-typo)
-  const [padan, setPadan] = useState(null);      // dialog padankan regu
   const [form, setForm] = useState(null);        // dialog tambah/ubah
   const [impor, setImpor] = useState(false);
   const [imporTeks, setImporTeks] = useState('');
@@ -42,14 +41,6 @@ export default function KelolaPage() {
     setHasil(r.ok ? `✅ ${r.sukses} diimpor${r.gagal.length ? ' · gagal: ' + r.gagal.join('; ') : ''}` : '❌ ' + (r.error || ''));
     muat();
   };
-  const padankan = async () => {
-    if (!padan.dari || !padan.ke || padan.dari === padan.ke) { setPadan({ ...padan, hasil: '❌ Isi nama lama & baru (berbeda)' }); return; }
-    if (!confirm(`Ubah SEMUA "${padan.dari}" menjadi "${padan.ke}"?\nBerlaku untuk jamaah DAN pengguna (KaRu).`)) return;
-    const r = await api('/api/regu/rename', { method: 'POST', body: JSON.stringify(padan) });
-    setPadan({ ...padan, hasil: r.ok ? `✅ ${r.jamaah} jamaah & ${r.users} pengguna dipindahkan ke "${padan.ke}"` : '❌ ' + (r.error || 'gagal') });
-    muat();
-    const r2 = await api('/api/regu'); if (r2.ok) setRegu(r2.regu || []);
-  };
   const pilihFoto = (file) => {
     if (!file) return;
     const img = new Image();
@@ -79,7 +70,6 @@ export default function KelolaPage() {
         <button className="btn btn-muda" onClick={() => setImpor(true)}>📋 Impor Tempel Excel</button>
         <a className="btn btn-muda" href="#/cetak">🖨️ Cetak Kartu</a>
         <button className="btn btn-muda" onClick={muat}>🔄 Segarkan</button>
-        <button className="btn btn-emas" onClick={() => setPadan({ dari: '', ke: '', hasil: '' })}>🛠 Padankan Regu</button>
       </div>
 
       <div className="kartu mt-3 overflow-x-auto">
@@ -129,8 +119,12 @@ export default function KelolaPage() {
               <div><label className="text-[12px] font-bold text-slate-500 block mt-2">No. Paspor</label><input className="input" value={form.paspor} onChange={e => setForm({ ...form, paspor: e.target.value })} /></div>
               <div><label className="text-[12px] font-bold text-slate-500 block mt-2">No. HP (WA)</label><input className="input" value={form.hp} onChange={e => setForm({ ...form, hp: e.target.value })} /></div>
               <div><label className="text-[12px] font-bold text-slate-500 block mt-2">Usia</label><input className="input" type="number" value={form.umur} onChange={e => setForm({ ...form, umur: e.target.value })} /></div>
-              <div><label className="text-[12px] font-bold text-slate-500 block mt-2">Regu <small className="text-slate-400 normal-case font-normal">(pilih dari daftar agar tidak typo)</small></label>
-              <input className="input" list="daftar-regu" value={form.regu} onChange={e => setForm({ ...form, regu: e.target.value })} placeholder="pilih / ketik baru" /></div>
+              <div><label className="text-[12px] font-bold text-slate-500 block mt-2">Regu <small className="text-slate-400 normal-case font-normal">(daftar resmi dikelola di ⚙️ Pengaturan)</small></label>
+              <select className="input" value={form.regu} onChange={e => setForm({ ...form, regu: e.target.value })}>
+                <option value="">— tanpa regu —</option>
+                {regu.map(r => <option key={r} value={r}>{r}</option>)}
+                {form.regu && !regu.includes(form.regu) && <option value={form.regu}>{form.regu} (lama)</option>}
+              </select></div>
             </div>
             <label className="text-[12px] font-bold text-slate-500 block mt-2">Hotel</label>
             <input className="input" value={form.hotel} onChange={e => setForm({ ...form, hotel: e.target.value })} />
@@ -156,27 +150,6 @@ export default function KelolaPage() {
         </div>
       )}
 
-      <datalist id="daftar-regu">{regu.map(r => <option key={r} value={r} />)}</datalist>
-
-      {/* dialog padankan regu */}
-      {padan && (
-        <div className="fixed inset-0 bg-black/50 z-[1400] grid place-items-center p-3" onClick={() => setPadan(null)}>
-          <div className="kartu p-5 w-full max-w-md" onClick={e => e.stopPropagation()}>
-            <b className="text-hijau text-[16px]">🛠 Padankan / Perbaiki Nama Regu</b>
-            <p className="text-[12px] text-slate-500 mt-1 leading-relaxed">Ada regu ketypa / beda penulisan? Pindahkan semuanya sekaligus ke nama yang benar — berlaku untuk jamaah <b>dan</b> KaRu pengawasnya.</p>
-            <label className="text-[12px] font-bold text-slate-500 block mt-3">Nama regu lama (yang salah)</label>
-            <input className="input" list="daftar-regu" value={padan.dari} onChange={e => setPadan({ ...padan, dari: e.target.value })} />
-            <label className="text-[12px] font-bold text-slate-500 block mt-2">Nama regu benar</label>
-            <input className="input" list="daftar-regu" value={padan.ke} onChange={e => setPadan({ ...padan, ke: e.target.value })} />
-            {padan.hasil && <p className="mt-3 font-bold text-[13px]">{padan.hasil}</p>}
-            <div className="flex gap-2 mt-4">
-              <button className="btn btn-muda flex-1" onClick={() => setPadan(null)}>Tutup</button>
-              <button className="btn btn-utama flex-1" onClick={padankan}>🔀 Pindahkan</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* dialog impor */}
       {impor && (
         <div className="fixed inset-0 bg-black/50 z-[1400] grid place-items-center p-3" onClick={() => setImpor(false)}>
@@ -186,7 +159,11 @@ export default function KelolaPage() {
             <textarea className="input !font-mono !text-[11.5px] mt-2" rows={7} value={imporTeks} onChange={e => setImporTeks(e.target.value)}
               placeholder={'H. Yusuf\tX1189501\t0812-3333\t60\tya\t\t—\nHj. Rohmah\tX1189502\t0812-3334\t72\ttidak\tFSC-A215\tlansia, gelang BLE'} />
             <div className="grid grid-cols-2 gap-2">
-              <div><label className="text-[12px] font-bold text-slate-500 block mt-2">Regu (sama semua)</label><input className="input" list="daftar-regu" value={imporRegu} onChange={e => setImporRegu(e.target.value)} /></div>
+              <div><label className="text-[12px] font-bold text-slate-500 block mt-2">Regu (sama semua)</label>
+                <select className="input" value={imporRegu} onChange={e => setImporRegu(e.target.value)}>
+                  <option value="">— tanpa regu —</option>
+                  {regu.map(r => <option key={'i' + r} value={r}>{r}</option>)}
+                </select></div>
               <div><label className="text-[12px] font-bold text-slate-500 block mt-2">Hotel (sama semua)</label><input className="input" value={imporHotel} onChange={e => setImporHotel(e.target.value)} /></div>
             </div>
             <div className="flex gap-2 mt-4">

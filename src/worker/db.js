@@ -38,6 +38,7 @@ const SKEMA = [
   `CREATE TABLE IF NOT EXISTS galat (id INTEGER PRIMARY KEY AUTOINCREMENT, waktu TEXT NOT NULL, path TEXT, metode TEXT, pesan TEXT, level TEXT DEFAULT 'error')`,
   `CREATE TABLE IF NOT EXISTS latihan (id INTEGER PRIMARY KEY AUTOINCREMENT, jamaah_id TEXT NOT NULL, ritual INTEGER, jarak_m REAL, durasi_s INTEGER DEFAULT 0, aktif_s INTEGER DEFAULT 0, selesai INTEGER DEFAULT 0, waktu TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS idx_latihan_jm ON latihan(jamaah_id, id DESC)`,
+  `CREATE TABLE IF NOT EXISTS regu_ref (id TEXT PRIMARY KEY, nama TEXT UNIQUE NOT NULL, urutan INTEGER DEFAULT 0, waktu TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS token (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, waktu TEXT NOT NULL, expires TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS idx_posisi_jm ON posisi(jamaah_id, id DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_kejadian ON kejadian(id DESC)`,
@@ -111,6 +112,18 @@ export async function seed(DB) {
   const sAda = await DB.prepare("SELECT COUNT(*) c FROM sesi WHERE tipe='tracking'").first();
   if (!sAda || !sAda.c) {
     await DB.prepare("INSERT INTO sesi (id, nama, tipe, waktu, oleh) VALUES ('trk1','Tracking Rombongan','tracking',?,'admin')").bind(nowISO()).run();
+  }
+  // referensi regu: sekali isi dari regu yang sudah terpakai (jamaah + pengguna)
+  const rRefAda = await DB.prepare('SELECT COUNT(*) c FROM regu_ref').first();
+  if (!rRefAda || !rRefAda.c) {
+    const set = new Set();
+    (await DB.prepare("SELECT DISTINCT regu FROM jamaah WHERE TRIM(COALESCE(regu,'')) != ''").all()).results.forEach(r => set.add(r.regu.trim()));
+    (await DB.prepare("SELECT DISTINCT regu FROM users WHERE TRIM(COALESCE(regu,'')) != ''").all()).results.forEach(r => set.add(r.regu.trim()));
+    let urut = 0;
+    for (const nama of [...set].sort()) {
+      await DB.prepare('INSERT OR IGNORE INTO regu_ref (id, nama, urutan, waktu) VALUES (?,?,?,?)')
+        .bind('rg' + (++urut), nama, urut, nowISO()).run();
+    }
   }
   const jAda = await DB.prepare('SELECT COUNT(*) c FROM jamaah').first();
   if (!jAda || !jAda.c) {
