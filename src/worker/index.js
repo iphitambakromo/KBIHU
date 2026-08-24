@@ -433,6 +433,119 @@ async function tangani(request, env) {
     return j({ ok: true, terhapus: (r && r.meta && r.meta.changes) || 0 });
   }
 
+
+  /* ---------- KELOLA JAMAAH (admin) ---------- */
+  if (path === '/api/jamaah' && method === 'GET') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const rows = (await DB.prepare('SELECT * FROM jamaah ORDER BY nama').all()).results || [];
+    return j({ ok: true, jamaah: rows });
+  }
+  if (path === '/api/jamaah' && method === 'POST') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const b = await request.json().catch(() => ({}));
+    if (!b.nama || !String(b.nama).trim()) return j({ ok: false, error: 'nama wajib' }, 400);
+    const id = idAcak('jm');
+    await DB.prepare('INSERT INTO jamaah (id, nama, paspor, hp, umur, regu, hotel, punya_hp, punya_gelang, beacon_id, catatan, foto) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(id, String(b.nama).trim(), b.paspor || '', b.hp || '', Number(b.umur) || null, b.regu || '', b.hotel || '',
+            b.punya_hp ? 1 : 0, b.punya_gelang ? 1 : 0, b.beacon_id || '', b.catatan || '', b.foto || '').run();
+    return j({ ok: true, id });
+  }
+  if (path === '/api/jamaah' && method === 'DELETE') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const id = url.searchParams.get('id') || '';
+    await DB.batch([
+      DB.prepare('DELETE FROM jamaah WHERE id=?').bind(id),
+      DB.prepare('DELETE FROM posisi WHERE jamaah_id=?').bind(id),
+      DB.prepare('DELETE FROM kejadian WHERE jamaah_id=?').bind(id),
+      DB.prepare('DELETE FROM absensi WHERE jamaah_id=?').bind(id),
+      DB.prepare('DELETE FROM latihan WHERE jamaah_id=?').bind(id),
+    ]);
+    return j({ ok: true });
+  }
+  if (path === '/api/jamaah/impor' && method === 'POST') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const baris = (b.rows || []).filter(r => String(r[0] || '').trim());
+    if (!baris.length) return j({ ok: false, error: 'tidak ada baris' }, 400);
+    let sukses = 0; const gagal = [];
+    for (let i = 0; i < baris.length; i++) {
+      const r = baris[i];
+      const nama = String(r[0] || '').trim();
+      if (!nama) { gagal.push('baris ' + (i + 1) + ': nama kosong'); continue; }
+      const beacon = String(r[5] || '').trim();
+      const punyaHP = /^(ya|hp|1|true)$/i.test(String(r[4] == null ? 'ya' : r[4]));
+      await DB.prepare('INSERT INTO jamaah (id, nama, paspor, hp, umur, regu, hotel, punya_hp, punya_gelang, beacon_id, catatan) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+        .bind(idAcak('jm'), nama, String(r[1] || '').trim(), String(r[2] || '').trim(), Number(r[3]) || null,
+              b.regu || '', b.hotel || '', punyaHP ? 1 : 0, beacon ? 1 : 0, beacon, String(r[6] || '').trim()).run();
+      sukses++;
+    }
+    return j({ ok: true, sukses, gagal });
+  }
+
+  /* ---------- PENGGUNA (admin) ---------- */
+  if (path === '/api/users' && method === 'GET') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const rows = (await DB.prepare('SELECT id, username, nama, peran, regu, wa, aktif FROM users ORDER BY peran, username').all()).results || [];
+    return j({ ok: true, users: rows });
+  }
+  if (path === '/api/users' && method === 'POST') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const b = await request.json().catch(() => ({}));
+    if (!b.username || !b.sandi || !b.peran) return j({ ok: false, error: 'username, sandi, peran wajib' }, 400);
+    const ada = await DB.prepare('SELECT id FROM users WHERE username=?').bind(String(b.username).trim()).first();
+    if (ada) return j({ ok: false, error: 'username sudah dipakai' }, 400);
+    const sc = await buatSandi(String(b.sandi));
+    await DB.prepare('INSERT INTO users (id, username, sandi_hash, salt, nama, peran, regu, wa, aktif) VALUES (?,?,?,?,?,?,?,?,1)')
+      .bind(idAcak('u'), String(b.username).trim(), sc.hash, sc.salt, b.nama || '', b.peran, b.peran === 'ketua-regu' ? (b.regu || '') : '', b.wa || '').run();
+    return j({ ok: true });
+  }
+  if (path === '/api/users' && method === 'PUT') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const u = await DB.prepare('SELECT * FROM users WHERE id=?').bind(String(b.id || '')).first();
+    if (!u) return j({ ok: false, error: 'pengguna tidak ditemukan' }, 404);
+    if (b.sandi) { const sc = await buatSandi(String(b.sandi)); await DB.prepare('UPDATE users SET sandi_hash=?, salt=? WHERE id=?').bind(sc.hash, sc.salt, u.id).run(); }
+    await DB.prepare('UPDATE users SET nama=?, peran=?, regu=?, wa=?, aktif=? WHERE id=?')
+      .bind(b.nama !== undefined ? b.nama : u.nama, b.peran || u.peran,
+            (b.peran || u.peran) === 'ketua-regu' ? (b.regu !== undefined ? b.regu : u.regu) : '',
+            b.wa !== undefined ? b.wa : u.wa, b.aktif === undefined ? u.aktif : (b.aktif ? 1 : 0), u.id).run();
+    if (b.aktif === 0) await DB.prepare('DELETE FROM token WHERE user_id=?').bind(u.id).run();
+    return j({ ok: true });
+  }
+  if (path === '/api/users' && method === 'DELETE') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const id = url.searchParams.get('id') || '';
+    if (id === 'u_admin') return j({ ok: false, error: 'akun admin utama tidak dapat dihapus' }, 400);
+    await DB.batch([DB.prepare('DELETE FROM users WHERE id=?').bind(id), DB.prepare('DELETE FROM token WHERE user_id=?').bind(id)]);
+    return j({ ok: true });
+  }
+
+  /* ---------- DIAGNOSTIK (admin) ---------- */
+  if (path === '/api/diag' && method === 'GET') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const galat = (await DB.prepare('SELECT * FROM galat ORDER BY id DESC LIMIT 50').all()).results || [];
+    const stat = {};
+    for (const t of ['jamaah', 'titik', 'posisi', 'kejadian', 'absensi_event', 'latihan', 'users']) {
+      stat[t] = (await DB.prepare(`SELECT COUNT(*) c FROM ${t}`).first()).c;
+    }
+    return j({ ok: true, galat, stat });
+  }
+  if (path === '/api/diag/clear' && method === 'POST') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    await DB.prepare('DELETE FROM galat').run();
+    return j({ ok: true });
+  }
+
   return j({ ok: false, error: 'endpoint tidak dikenal' }, 404);
 }
 

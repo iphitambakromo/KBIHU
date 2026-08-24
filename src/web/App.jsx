@@ -7,6 +7,9 @@ import MapView from './components/MapView.jsx';
 import AbsensiPage from './pages/AbsensiPage.jsx';
 import CetakPage from './pages/CetakPage.jsx';
 import ProgresPage from './pages/ProgresPage.jsx';
+import KelolaPage from './pages/KelolaPage.jsx';
+import PenggunaPage from './pages/PenggunaPage.jsx';
+import DiagPage from './pages/DiagPage.jsx';
 
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
@@ -112,7 +115,11 @@ export default function App() {
             </span>
           </header>
 
-          {rute === 'absensi' ? <div className="flex-1 overflow-y-auto"><AbsensiPage /></div> : rute === 'progres' ? <div className="flex-1 overflow-y-auto"><ProgresPage /></div> : rute === 'cetak' ? (
+          {rute === 'absensi' ? <div className="flex-1 overflow-y-auto"><AbsensiPage /></div> : rute === 'progres' ? <div className="flex-1 overflow-y-auto"><ProgresPage /></div>
+            : rute === 'kelola' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><KelolaPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
+            : rute === 'pengguna' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><PenggunaPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
+            : rute === 'diag' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><DiagPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
+            : rute === 'cetak' ? (
             sesi.peran === 'admin' || sesi.peran === 'ketrom' ? <div className="flex-1 overflow-y-auto"><CetakPage /></div>
             : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin / KaRom</div>
           ) : (

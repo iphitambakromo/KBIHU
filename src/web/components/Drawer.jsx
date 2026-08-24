@@ -9,9 +9,9 @@ export default function Drawer({ open, onClose, onKeluar, sesi, rute }) {
       { l: '🪪 Cetak Kartu', href: '#/cetak', khusus: sesi.peran === 'admin' || sesi.peran === 'ketrom' },
     ]},
     { t: 'Pengaturan', items: [
-      { l: '🛂 Kelola Jamaah', segera: sesi.peran === 'admin' },
-      { l: '👥 Pengguna', segera: sesi.peran === 'admin' },
-      { l: '🛠 Diagnostik', segera: true },
+      { l: '🛂 Kelola Jamaah', href: '#/kelola', khusus: sesi.peran === 'admin' },
+      { l: '👥 Pengguna', href: '#/pengguna', khusus: sesi.peran === 'admin' },
+      { l: '🛠 Diagnostik', href: '#/diag', khusus: sesi.peran === 'admin' },
     ]},
   ];
   return (
