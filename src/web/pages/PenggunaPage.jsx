@@ -2,19 +2,32 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import { useApp } from '../App.jsx';
 
-const KOSONG = { id: null, username: '', nama: '', peran: 'ketua-regu', regu: '', wa: '', sandi: '' };
+const KOSONG = { id: null, username: '', nama: '', peran: 'ketua-regu', regu: '', wa: '', sandi: '', foto: '' };
 const LABEL = { admin: '🛂 Admin', ketrom: '🧭 KaRom', 'ketua-regu': '🚩 KaRu' };
 
 export default function PenggunaPage() {
   const { tampilToast } = useApp();
   const [rows, setRows] = useState([]);
   const [form, setForm] = useState(null);
+  const [regu, setRegu] = useState([]);
 
   const muat = useCallback(async () => {
     const d = await api('/api/users');
     if (d.ok) setRows(d.users || []);
   }, []);
-  useEffect(() => { muat(); }, [muat]);
+  useEffect(() => { muat(); (async () => { const r = await api('/api/regu'); if (r.ok) setRegu(r.regu || []); })(); }, [muat]);
+  const pilihFoto = (file) => {
+    if (!file) return;
+    const img = new Image();
+    img.onload = () => {
+      const maks = 360, skala = Math.min(1, maks / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * skala); c.height = Math.round(img.height * skala);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      setForm(f => ({ ...f, foto: c.toDataURL('image/jpeg', 0.72) }));
+    };
+    img.src = URL.createObjectURL(file);
+  };
 
   const simpan = async () => {
     if (!form.username) { tampilToast('Username wajib', true); return; }
@@ -50,7 +63,11 @@ export default function PenggunaPage() {
           <tbody>
             {rows.map(u => (
               <tr key={u.id} className="border-b border-slate-100">
-                <td className="p-2.5"><b>{u.username}</b><br /><small className="text-slate-500">{u.nama || '—'}</small></td>
+                <td className="p-2.5"><div className="flex items-center gap-2">
+                  {u.foto ? <img src={u.foto} alt="" className="w-9 h-9 rounded-full object-cover border border-slate-200" />
+                    : <div className="w-9 h-9 rounded-full bg-emerald-50 text-hijau grid place-items-center font-extrabold text-[13px]">{(u.username || '?').slice(0, 2).toUpperCase()}</div>}
+                  <div><b>{u.username}</b><br /><small className="text-slate-500">{u.nama || '—'}</small></div>
+                </div></td>
                 <td className="p-2.5">{LABEL[u.peran] || u.peran}</td>
                 <td className="p-2.5">{u.regu || '—'}</td>
                 <td className="p-2.5">{u.wa || '—'}</td>
@@ -82,10 +99,18 @@ export default function PenggunaPage() {
               <option value="ketrom">🧭 Ketua Rombongan (KaRom)</option>
               <option value="admin">🛂 Admin</option>
             </select>
-            {form.peran === 'ketua-regu' && <><label className="text-[12px] font-bold text-slate-500 block mt-2">Regu yang diawasi *</label>
-              <input className="input" value={form.regu} onChange={e => setForm({ ...form, regu: e.target.value })} placeholder="mis. Regu 6 – Wisata Iman" /></>}
+            {form.peran === 'ketua-regu' && <><label className="text-[12px] font-bold text-slate-500 block mt-2">Regu yang diawasi * <small className="text-slate-400 normal-case font-normal">(pilih dari daftar = sama persis dgn regu jamaah)</small></label>
+              <input className="input" list="daftar-regu-user" value={form.regu} onChange={e => setForm({ ...form, regu: e.target.value })} placeholder="pilih dari daftar" />
+              <datalist id="daftar-regu-user">{regu.map(r => <option key={r} value={r} />)}</datalist>
+              {regu.length > 0 && <small className="text-slate-400 text-[11px]">Regu terdaftar: {regu.join(' · ')}</small>}</>}
             <label className="text-[12px] font-bold text-slate-500 block mt-2">Nomor WhatsApp</label>
             <input className="input" value={form.wa} onChange={e => setForm({ ...form, wa: e.target.value })} placeholder="0812-3456-7890" />
+            <label className="text-[12px] font-bold text-slate-500 block mt-2">Foto (kamera / galeri, dikompres otomatis)</label>
+            <div className="flex gap-2 items-center">
+              {form.foto ? <img src={form.foto} alt="" className="w-14 h-14 rounded-full object-cover border border-slate-200" /> : null}
+              <input type="file" accept="image/*" capture="environment" className="text-[13px]" onChange={e => pilihFoto(e.target.files?.[0])} />
+              {form.foto && <button className="btn btn-muda !min-h-[38px] !text-[11.5px]" onClick={() => setForm({ ...form, foto: '' })}>🗑️</button>}
+            </div>
             <label className="text-[12px] font-bold text-slate-500 block mt-2">{form.id ? 'Kata sandi baru (kosongkan bila tak diubah)' : 'Kata sandi *'}</label>
             <input className="input" type="password" value={form.sandi} onChange={e => setForm({ ...form, sandi: e.target.value })} />
             <div className="flex gap-2 mt-4">

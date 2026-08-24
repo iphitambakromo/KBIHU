@@ -490,7 +490,7 @@ async function tangani(request, env) {
   if (path === '/api/users' && method === 'GET') {
     if (!USER) return tolak();
     if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
-    const rows = (await DB.prepare('SELECT id, username, nama, peran, regu, wa, aktif FROM users ORDER BY peran, username').all()).results || [];
+    const rows = (await DB.prepare('SELECT id, username, nama, peran, regu, wa, foto, aktif FROM users ORDER BY peran, username').all()).results || [];
     return j({ ok: true, users: rows });
   }
   if (path === '/api/users' && method === 'POST') {
@@ -501,8 +501,8 @@ async function tangani(request, env) {
     const ada = await DB.prepare('SELECT id FROM users WHERE username=?').bind(String(b.username).trim()).first();
     if (ada) return j({ ok: false, error: 'username sudah dipakai' }, 400);
     const sc = await buatSandi(String(b.sandi));
-    await DB.prepare('INSERT INTO users (id, username, sandi_hash, salt, nama, peran, regu, wa, aktif) VALUES (?,?,?,?,?,?,?,?,1)')
-      .bind(idAcak('u'), String(b.username).trim(), sc.hash, sc.salt, b.nama || '', b.peran, b.peran === 'ketua-regu' ? (b.regu || '') : '', b.wa || '').run();
+    await DB.prepare('INSERT INTO users (id, username, sandi_hash, salt, nama, peran, regu, wa, foto, aktif) VALUES (?,?,?,?,?,?,?,?,?,1)')
+      .bind(idAcak('u'), String(b.username).trim(), sc.hash, sc.salt, b.nama || '', b.peran, b.peran === 'ketua-regu' ? (b.regu || '') : '', b.wa || '', b.foto || '').run();
     return j({ ok: true });
   }
   if (path === '/api/users' && method === 'PUT') {
@@ -512,10 +512,10 @@ async function tangani(request, env) {
     const u = await DB.prepare('SELECT * FROM users WHERE id=?').bind(String(b.id || '')).first();
     if (!u) return j({ ok: false, error: 'pengguna tidak ditemukan' }, 404);
     if (b.sandi) { const sc = await buatSandi(String(b.sandi)); await DB.prepare('UPDATE users SET sandi_hash=?, salt=? WHERE id=?').bind(sc.hash, sc.salt, u.id).run(); }
-    await DB.prepare('UPDATE users SET nama=?, peran=?, regu=?, wa=?, aktif=? WHERE id=?')
+    await DB.prepare('UPDATE users SET nama=?, peran=?, regu=?, wa=?, foto=?, aktif=? WHERE id=?')
       .bind(b.nama !== undefined ? b.nama : u.nama, b.peran || u.peran,
             (b.peran || u.peran) === 'ketua-regu' ? (b.regu !== undefined ? b.regu : u.regu) : '',
-            b.wa !== undefined ? b.wa : u.wa, b.aktif === undefined ? u.aktif : (b.aktif ? 1 : 0), u.id).run();
+            b.wa !== undefined ? b.wa : u.wa, b.foto === undefined ? (u.foto || '') : b.foto, b.aktif === undefined ? u.aktif : (b.aktif ? 1 : 0), u.id).run();
     if (b.aktif === 0) await DB.prepare('DELETE FROM token WHERE user_id=?').bind(u.id).run();
     return j({ ok: true });
   }
@@ -544,6 +544,26 @@ async function tangani(request, env) {
     if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
     await DB.prepare('DELETE FROM galat').run();
     return j({ ok: true });
+  }
+
+
+  /* ---------- DAFTAR REGU (anti-typo) + padankan ---------- */
+  if (path === '/api/regu' && method === 'GET') {
+    if (!USER) return tolak();
+    const set = new Set();
+    (await DB.prepare("SELECT DISTINCT regu FROM jamaah WHERE TRIM(COALESCE(regu,'')) != ''").all()).results.forEach(r => set.add(r.regu.trim()));
+    (await DB.prepare("SELECT DISTINCT regu FROM users WHERE TRIM(COALESCE(regu,'')) != ''").all()).results.forEach(r => set.add(r.regu.trim()));
+    return j({ ok: true, regu: [...set].sort() });
+  }
+  if (path === '/api/regu/rename' && method === 'POST') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const dari = String(b.dari || '').trim(), ke = String(b.ke || '').trim();
+    if (!dari || !ke || dari === ke) return j({ ok: false, error: 'isi nama lama & nama baru (berbeda)' }, 400);
+    const a = await DB.prepare('UPDATE jamaah SET regu=? WHERE TRIM(COALESCE(regu,\'\'))=?').bind(ke, dari).run();
+    const u = await DB.prepare('UPDATE users SET regu=? WHERE TRIM(COALESCE(regu,\'\'))=?').bind(ke, dari).run();
+    return j({ ok: true, jamaah: (a.meta && a.meta.changes) || 0, users: (u.meta && u.meta.changes) || 0 });
   }
 
   return j({ ok: false, error: 'endpoint tidak dikenal' }, 404);
