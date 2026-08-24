@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL,
   sandi_hash TEXT, salt TEXT,
   nama TEXT DEFAULT '', peran TEXT NOT NULL,           -- admin | ketrom | ketua-regu
-  regu TEXT DEFAULT '', wa TEXT DEFAULT '', aktif INTEGER DEFAULT 1
+  regu TEXT DEFAULT '', wa TEXT DEFAULT '', foto TEXT DEFAULT '', aktif INTEGER DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS jamaah (
   id TEXT PRIMARY KEY, nama TEXT NOT NULL, paspor TEXT, hp TEXT, umur INTEGER,
@@ -74,8 +74,17 @@ CREATE TABLE IF NOT EXISTS galat (                      -- 🛠 diagnostik error
   id INTEGER PRIMARY KEY AUTOINCREMENT, waktu TEXT NOT NULL,
   path TEXT, metode TEXT, pesan TEXT, level TEXT DEFAULT 'error'
 );
+CREATE TABLE IF NOT EXISTS regu_ref (                 -- referensi regu resmi (menu Pengaturan)
+  id TEXT PRIMARY KEY, nama TEXT UNIQUE NOT NULL, urutan INTEGER DEFAULT 0, waktu TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS latihan (                  -- catatan odometer latihan mandiri
+  id INTEGER PRIMARY KEY AUTOINCREMENT, jamaah_id TEXT NOT NULL, ritual INTEGER,
+  jarak_m REAL, durasi_s INTEGER DEFAULT 0, aktif_s INTEGER DEFAULT 0,
+  selesai INTEGER DEFAULT 0, waktu TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS token (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, waktu TEXT NOT NULL, expires TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_posisi_jm ON posisi(jamaah_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_kejadian ON kejadian(id DESC);
 CREATE INDEX IF NOT EXISTS idx_titik ON titik(sesi_id);
 CREATE INDEX IF NOT EXISTS idx_absensi_ev ON absensi(event_id);
+CREATE INDEX IF NOT EXISTS idx_latihan_jm ON latihan(jamaah_id, id DESC);
