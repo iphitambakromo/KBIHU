@@ -36,6 +36,8 @@ const SKEMA = [
   `CREATE TABLE IF NOT EXISTS absensi (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL, jamaah_id TEXT NOT NULL, status TEXT DEFAULT 'hadir', sumber TEXT DEFAULT 'radar', lat REAL, lng REAL, waktu TEXT NOT NULL, oleh TEXT DEFAULT '', UNIQUE(event_id, jamaah_id))`,
   `CREATE TABLE IF NOT EXISTS kalibrasi (id INTEGER PRIMARY KEY AUTOINCREMENT, waktu TEXT NOT NULL, jenis TEXT DEFAULT 'titik', ref_id TEXT, nama TEXT, lat REAL, lng REAL, radius INTEGER, sumber TEXT, oleh TEXT)`,
   `CREATE TABLE IF NOT EXISTS galat (id INTEGER PRIMARY KEY AUTOINCREMENT, waktu TEXT NOT NULL, path TEXT, metode TEXT, pesan TEXT, level TEXT DEFAULT 'error')`,
+  `CREATE TABLE IF NOT EXISTS latihan (id INTEGER PRIMARY KEY AUTOINCREMENT, jamaah_id TEXT NOT NULL, ritual INTEGER, jarak_m REAL, durasi_s INTEGER DEFAULT 0, aktif_s INTEGER DEFAULT 0, selesai INTEGER DEFAULT 0, waktu TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS idx_latihan_jm ON latihan(jamaah_id, id DESC)`,
   `CREATE TABLE IF NOT EXISTS token (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, waktu TEXT NOT NULL, expires TEXT NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS idx_posisi_jm ON posisi(jamaah_id, id DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_kejadian ON kejadian(id DESC)`,

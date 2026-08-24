@@ -4,12 +4,9 @@ export default function Drawer({ open, onClose, onKeluar, sesi, rute }) {
     { t: 'Utama', items: [
       { l: '🗺️ Dashboard', href: '#/' },
       { l: '✅ Absensi Titik', href: '#/absensi' },
-      { l: '🪪 Cetak Kartu', href: '#/cetak', khusus: sesi.peran === 'admin' || sesi.peran === 'ketrom' },
       { l: '📡 Radar Gelang', href: '#/radar' },
-    ]},
-    { t: 'Simulasi', items: [
-      { l: '🥾 Simulasi Grup (rute)', segera: true },
-      { l: '🏃 Latihan Mandiri', segera: true },
+      { l: '📊 Progres Latihan', href: '#/progres' },
+      { l: '🪪 Cetak Kartu', href: '#/cetak', khusus: sesi.peran === 'admin' || sesi.peran === 'ketrom' },
     ]},
     { t: 'Pengaturan', items: [
       { l: '🛂 Kelola Jamaah', segera: sesi.peran === 'admin' },

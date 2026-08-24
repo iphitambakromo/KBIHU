@@ -348,6 +348,91 @@ async function tangani(request, env) {
     return j({ ok: true, jamaah: m.nama, titik: r.titik, absensi });
   }
 
+
+  /* ---------- LATIHAN MANDIRI ---------- */
+  const jamaahByToken = async (tok) => {
+    if (!tok) return null;
+    return await DB.prepare('SELECT * FROM jamaah WHERE latihan_token=?').bind(String(tok)).first();
+  };
+  const progresJamaah = async (jid) => {
+    const rows = (await DB.prepare('SELECT ritual, SUM(jarak_m) m, COUNT(*) n FROM latihan WHERE jamaah_id=? GROUP BY ritual').bind(jid).all()).results || [];
+    const per = {}; rows.forEach(r => { if (r.ritual != null) per[r.ritual] = { meter: Math.round(r.m || 0), sesi: r.n }; });
+    const total = (await DB.prepare('SELECT SUM(jarak_m) m, COUNT(*) n FROM latihan WHERE jamaah_id=?').bind(jid).first());
+    return { per, meter: Math.round(total.m || 0), sesi: total.n || 0 };
+  };
+  const totalTarget = async () => {
+    const t = (await DB.prepare('SELECT SUM(target_m) t FROM target_ritual').first());
+    return t.t || 0;
+  };
+
+  /* publik: profil latihan + riwayat (via tautan pribadi) */
+  if (path.startsWith('/api/pub/latihan/') && method === 'GET') {
+    const tok = decodeURIComponent(path.split('/')[4] || '');
+    const m = await jamaahByToken(tok);
+    if (!m) return j({ ok: false, error: 'tautan tidak valid' }, 404);
+    const target = (await DB.prepare('SELECT * FROM target_ritual ORDER BY urutan').all()).results || [];
+    const riwayat = (await DB.prepare('SELECT * FROM latihan WHERE jamaah_id=? ORDER BY id DESC LIMIT 60').bind(m.id).all()).results || [];
+    return j({ ok: true, jamaah: { id: m.id, nama: m.nama, regu: m.regu, hotel: m.hotel, umur: m.umur }, target, riwayat, progres: await progresJamaah(m.id), totalTarget: await totalTarget() });
+  }
+  /* publik: catat hasil (tahan offline: checkpoint & akhir sesi) */
+  if (path === '/api/pub/latihan' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const m = await jamaahByToken(String(b.token || ''));
+    if (!m) return j({ ok: false, error: 'tautan tidak valid' }, 404);
+    const ritual = Number.isFinite(Number(b.ritual)) ? Math.round(Number(b.ritual)) : null;
+    await DB.prepare('INSERT INTO latihan (jamaah_id, ritual, jarak_m, durasi_s, aktif_s, selesai, waktu) VALUES (?,?,?,?,?,?,?)')
+      .bind(m.id, ritual, Math.max(0, Math.round(Number(b.jarakM) || 0)), Math.round(Number(b.durasiS) || 0), Math.round(Number(b.aktifS) || 0), b.selesai ? 1 : 0, nowISO()).run();
+    return j({ ok: true, progres: await progresJamaah(m.id) });
+  }
+  /* publik: reset sendiri */
+  if (path === '/api/pub/latihan/reset' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const m = await jamaahByToken(String(b.token || ''));
+    if (!m) return j({ ok: false, error: 'tautan tidak valid' }, 404);
+    const r = await DB.prepare('DELETE FROM latihan WHERE jamaah_id=?').bind(m.id).run();
+    return j({ ok: true, terhapus: (r && r.meta && r.meta.changes) || 0 });
+  }
+  /* auth: buat/bagikan tautan latihan */
+  if (path === '/api/latihan/link' && method === 'POST') {
+    if (!USER) return tolak();
+    if (!['admin', 'ketrom'].includes(USER.peran)) return j({ ok: false, error: 'khusus Admin / KaRom' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const m = await DB.prepare('SELECT * FROM jamaah WHERE id=?').bind(String(b.jamaahId || '')).first();
+    if (!m) return j({ ok: false, error: 'jamaah tidak ditemukan' }, 404);
+    let tok = m.latihan_token;
+    if (!tok) {
+      tok = 'lt_' + [...crypto.getRandomValues(new Uint8Array(16))].map(x => x.toString(16).padStart(2, '0')).join('');
+      await DB.prepare('UPDATE jamaah SET latihan_token=? WHERE id=?').bind(tok, m.id).run();
+    }
+    return j({ ok: true, url: new URL(request.url).origin + '/#/latihan/' + encodeURIComponent(tok), nama: m.nama });
+  }
+  /* auth: papan progres seluruh jamaah */
+  if (path === '/api/latihan/progres' && method === 'GET') {
+    if (!USER) return tolak();
+    let ms = (await DB.prepare('SELECT * FROM jamaah ORDER BY nama').all()).results || [];
+    if (USER.peran === 'ketua-regu') { const r = (USER.regu || '').trim(); ms = r ? ms.filter(x => String(x.regu || '').trim() === r) : []; }
+    const target = (await DB.prepare('SELECT * FROM target_ritual ORDER BY urutan').all()).results || [];
+    const totTarget = await totalTarget();
+    const rows = [];
+    for (const m of ms) {
+      const pr = await progresJamaah(m.id);
+      rows.push({ id: m.id, nama: m.nama, regu: m.regu, punya_gelang: !!m.punya_gelang, punya_hp: !!m.punya_hp,
+        meter: pr.meter, sesi: pr.sesi, perRitual: pr.per, siap: pr.meter >= 0.8 * totTarget });
+    }
+    return j({ ok: true, rows, target, totalTarget: totTarget, siapPada: Math.round(0.8 * totTarget) });
+  }
+  /* auth: reset per jamaah oleh ketua */
+  if (path === '/api/latihan/reset' && method === 'POST') {
+    if (!USER) return tolak();
+    if (!['admin', 'ketrom', 'ketua-regu'].includes(USER.peran)) return j({ ok: false, error: 'tidak diizinkan' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const m = await DB.prepare('SELECT * FROM jamaah WHERE id=?').bind(String(b.jamaahId || '')).first();
+    if (!m) return j({ ok: false, error: 'jamaah tidak ditemukan' }, 404);
+    if (USER.peran === 'ketua-regu' && String(m.regu || '').trim() !== String(USER.regu || '').trim()) return j({ ok: false, error: 'di luar regu Anda' }, 403);
+    const r = await DB.prepare('DELETE FROM latihan WHERE jamaah_id=?').bind(m.id).run();
+    return j({ ok: true, terhapus: (r && r.meta && r.meta.changes) || 0 });
+  }
+
   return j({ ok: false, error: 'endpoint tidak dikenal' }, 404);
 }
 
