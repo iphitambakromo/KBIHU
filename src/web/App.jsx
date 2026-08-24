@@ -4,6 +4,8 @@ import { bacaGPS } from './lib/gps.js';
 import Toast from './components/Toast.jsx';
 import Drawer from './components/Drawer.jsx';
 import MapView from './components/MapView.jsx';
+import AbsensiPage from './pages/AbsensiPage.jsx';
+import CetakPage from './pages/CetakPage.jsx';
 
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
@@ -49,6 +51,12 @@ export default function App() {
   const [sesi, setSesi] = useState(null);              // info user login
   const [state, setState] = useState(null);            // data dashboard
   const [drawer, setDrawer] = useState(false);
+  const [rute, setRute] = useState((location.hash || '#/').replace('#/', ''));
+  useEffect(() => {
+    const fn = () => { setRute((location.hash || '#/').replace('#/', '')); setDrawer(false); };
+    window.addEventListener('hashchange', fn);
+    return () => window.removeEventListener('hashchange', fn);
+  }, []);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
 
@@ -103,6 +111,11 @@ export default function App() {
             </span>
           </header>
 
+          {rute === 'absensi' ? <div className="flex-1 overflow-y-auto"><AbsensiPage /></div> : rute === 'cetak' ? (
+            sesi.peran === 'admin' || sesi.peran === 'ketrom' ? <div className="flex-1 overflow-y-auto"><CetakPage /></div>
+            : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin / KaRom</div>
+          ) : (
+          <>
           {/* RESPONSIF: peta penuh + panel bawah (HP) / grid 2 kolom (tableti & PC) */}
           <div className="flex-1 min-h-0 md:grid md:grid-cols-[380px_1fr] lg:grid-cols-[420px_1fr]">
             <MapView />
@@ -140,11 +153,45 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              <p className="text-slate-400 text-[11px] text-center pb-2">Absensi, Radar Gelang, Kartu Jamaah & Simulasi hadir di fase berikutnya</p>
+              <div className="kartu p-4">
+                <h2 className="text-[12px] font-extrabold uppercase tracking-wide text-hijau">Jamaah — posisi terkini</h2>
+                <div className="mt-2 space-y-2">
+                  {(state?.jamaah || []).map(m => (
+                    <div key={m.id} className="flex items-center gap-3 border border-slate-200 rounded-xl p-2.5">
+                      {m.foto
+                        ? <img src={m.foto} alt="" className="w-11 h-11 rounded-xl object-cover" />
+                        : <div className="w-11 h-11 rounded-xl bg-emerald-50 text-hijau grid place-items-center font-extrabold">{(m.nama || '?').replace(/^(H\.|Hj\.)\s*/, '').split(' ').slice(0, 2).map(x => x[0]).join('')}</div>}
+                      <div className="flex-1 min-w-0">
+                        <b className="text-[13.5px] block truncate">{m.nama}</b>
+                        <small className="text-slate-500 text-[11.5px]">
+                          {m.posisi
+                            ? `${new Date(m.posisi.waktu).toLocaleTimeString('id-ID')} · ${m.posisi.sumber === 'sos' ? '🆘' : m.posisi.sumber === 'checkin' ? '📲' : '📡'}${m.titik ? ' · di ' + m.titik : ' · di luar titik'}`
+                            : 'belum ada data'}
+                        </small>
+                      </div>
+                      <a className="btn btn-muda !min-h-[38px] !px-3 !text-[11.5px]" href={'#/kartu/' + encodeURIComponent(m.id)}>🪪</a>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="kartu p-4">
+                <h2 className="text-[12px] font-extrabold uppercase tracking-wide text-hijau">🔔 Kejadian terbaru</h2>
+                <div className="mt-2 text-[12.5px] leading-relaxed">
+                  {(state?.kejadian || []).slice(0, 10).map(k => (
+                    <div key={k.id} className="border-b border-dashed border-slate-200 py-1.5 last:border-0">
+                      {{sos:'🆘',checkin:'📲',masuk_titik:'📍'}[k.tipe] || '•'} <b>{k.nama || ''}</b> — {k.keterangan}
+                      <small className="text-slate-400 block">{new Date(k.waktu).toLocaleTimeString('id-ID')}</small>
+                    </div>
+                  ))}
+                  {(!state?.kejadian || state.kejadian.length === 0) && <p className="text-slate-500">Belum ada kejadian.</p>}
+                </div>
+              </div>
             </section>
           </div>
 
-          <Drawer open={drawer} onClose={() => setDrawer(false)} onKeluar={keluar} sesi={sesi} />
+          </>
+          )}
+          <Drawer open={drawer} onClose={() => setDrawer(false)} onKeluar={keluar} sesi={sesi} rute={rute} />
           <Toast toast={toast} />
         </div>
       )}

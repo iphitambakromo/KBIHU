@@ -1,12 +1,11 @@
 import React from 'react';
-export default function Drawer({ open, onClose, onKeluar, sesi }) {
+export default function Drawer({ open, onClose, onKeluar, sesi, rute }) {
   const grup = [
     { t: 'Utama', items: [
-      { l: '🗺️ Dashboard', aktif: true },
-      { l: '📍 Titik & Tujuan', aktif: true },
-      { l: '✅ Absensi Titik', segera: true },
+      { l: '🗺️ Dashboard', href: '#/' },
+      { l: '✅ Absensi Titik', href: '#/absensi' },
+      { l: '🪪 Cetak Kartu', href: '#/cetak', khusus: sesi.peran === 'admin' || sesi.peran === 'ketrom' },
       { l: '📡 Radar Gelang', segera: true },
-      { l: '🪪 Kartu Jamaah', segera: true },
     ]},
     { t: 'Simulasi', items: [
       { l: '🥾 Simulasi Grup (rute)', segera: true },
@@ -36,7 +35,11 @@ export default function Drawer({ open, onClose, onKeluar, sesi }) {
           {grup.map(g => (
             <div key={g.t}>
               <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 px-3 pt-4 pb-1">{g.t}</p>
-              {g.items.filter(x => x.aktif || x.segera).map(x => (
+              {g.items.filter(x => x.href || x.segera).filter(x => !x.khusus || x.khusus).map(x => x.href ? (
+                <a key={x.l} href={x.href}
+                  className={`w-full text-left rounded-xl px-3.5 py-3.5 text-[15px] font-bold min-h-[54px] flex items-center
+                    ${('#/' + rute) === x.href || (x.href === '#/' && rute === '') ? 'bg-emerald-50 text-hijau' : 'text-slate-700 hover:bg-emerald-50'}`}>{x.l}</a>
+              ) : (
                 <button key={x.l} disabled={x.segera}
                   className={`w-full text-left rounded-xl px-3.5 py-3.5 text-[15px] font-bold min-h-[54px]
                     ${x.segera ? 'text-slate-300 cursor-not-allowed' : 'text-slate-700 hover:bg-emerald-50'}`}>

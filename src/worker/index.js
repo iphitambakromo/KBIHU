@@ -66,6 +66,18 @@ async function tangani(request, env) {
   const tolak = () => j({ ok: false, error: 'tidak terautentikasi' }, 401);
   const bolehKelola = () => USER && ['admin', 'ketrom', 'ketua-regu'].includes(USER.peran);
 
+  /* ---------- helper titik ---------- */
+  const titikSesi = async (sesiId) =>
+    (await DB.prepare('SELECT * FROM titik WHERE sesi_id=?').bind(sesiId).all()).results || [];
+  const dalamTitikMana = (tk, lat, lng) => {
+    let terbaik = null;
+    for (const t of tk) {
+      const d = jarakM(lat, lng, t.lat, t.lng);
+      if (d <= t.radius && (!terbaik || d < terbaik.jarak)) terbaik = { t, jarak: Math.round(d) };
+    }
+    return terbaik;
+  };
+
   /* ---------- STATE (dashboard) ---------- */
   if (path === '/api/state' && method === 'GET') {
     if (!USER) return tolak();
@@ -77,8 +89,18 @@ async function tangani(request, env) {
     const sesi = (await DB.prepare("SELECT * FROM sesi WHERE tipe='tracking' AND status='aktif' ORDER BY waktu DESC LIMIT 1").first())
       || { id: 'trk1', nama: 'Tracking Rombongan' };
     const titik = (await DB.prepare('SELECT * FROM titik WHERE sesi_id=? ORDER BY waktu DESC').bind(sesi.id).all()).results || [];
-    return j({ ok: true, sesi, titik, jamaah: jamaah.map(m => ({ ...m, punya_hp: !!m.punya_hp, punya_gelang: !!m.punya_gelang })),
+    const jmFinal = [];
+    for (const m of jamaah) {
+      const p = (await DB.prepare('SELECT lat, lng, sumber, waktu FROM posisi WHERE jamaah_id=? ORDER BY id DESC LIMIT 1').bind(m.id).first());
+      const dm = p ? dalamTitikMana(titik, p.lat, p.lng) : null;
+      jmFinal.push({ ...m, punya_hp: !!m.punya_hp, punya_gelang: !!m.punya_gelang,
+        posisi: p ? { lat: p.lat, lng: p.lng, sumber: p.sumber, waktu: p.waktu } : null,
+        titik: dm ? dm.t.nama : null });
+    }
+    const kejadian = (await DB.prepare('SELECT k.*, j.nama FROM kejadian k LEFT JOIN jamaah j ON j.id=k.jamaah_id WHERE k.sesi_id=? ORDER BY k.id DESC LIMIT 20').bind(sesi.id).all()).results || [];
+    return j({ ok: true, sesi, titik, jamaah: jmFinal,
       stat: { total: jamaah.length, gelang: jamaah.filter(m => m.punya_gelang).length },
+      kejadian,
       anda: { peran: USER.peran, nama: USER.nama || USER.username, regu: USER.regu || '' } });
   }
 
@@ -121,6 +143,159 @@ async function tangani(request, env) {
     const id = url.searchParams.get('id') || '';
     await DB.prepare('DELETE FROM titik WHERE id=?').bind(id).run();
     return j({ ok: true });
+  }
+
+
+  /* ---------- PUBLIK: kartu jamaah, check-in, SOS ---------- */
+  const waKetua = async (regu) => {
+    const r = String(regu || '').trim();
+    let u = r ? await DB.prepare("SELECT wa, nama FROM users WHERE peran='ketua-regu' AND regu=? AND wa != '' LIMIT 1").bind(r).first() : null;
+    if (!u) u = await DB.prepare("SELECT wa, nama FROM users WHERE peran='ketrom' AND wa != '' LIMIT 1").first();
+    if (!u) u = await DB.prepare("SELECT wa, nama FROM users WHERE peran='admin' AND wa != '' LIMIT 1").first();
+    return u || null;
+  };
+  if (path.startsWith('/api/pub/jamaah/') && method === 'GET') {
+    const id = decodeURIComponent(path.split('/')[4] || '');
+    const m = await DB.prepare('SELECT * FROM jamaah WHERE id=?').bind(id).first();
+    if (!m) return j({ ok: false, error: 'jamaah tidak ditemukan' }, 404);
+    const wk = await waKetua(m.regu);
+    const ev = await DB.prepare('SELECT id, nama, titik_id FROM absensi_event WHERE ditutup=0 ORDER BY waktu DESC LIMIT 1').first();
+    let titikAcara = null;
+    if (ev && ev.titik_id) titikAcara = await DB.prepare('SELECT * FROM titik WHERE id=?').bind(ev.titik_id).first();
+    return j({ ok: true, jamaah: { id: m.id, nama: m.nama, regu: m.regu, hotel: m.hotel, umur: m.umur, foto: m.foto,
+      punya_hp: !!m.punya_hp, punya_gelang: !!m.punya_gelang, catatan: m.catatan },
+      waKetua: wk ? wk.wa : '', waKetuaNama: wk ? wk.nama : '', acara: ev ? { id: ev.id, nama: ev.nama, titik: titikAcara } : null });
+  }
+
+  async function catatPosisi(DB2, jamaahId, lat, lng, sumber) {
+    const sesi = await DB2.prepare("SELECT id FROM sesi WHERE tipe='tracking' AND status='aktif' ORDER BY waktu DESC LIMIT 1").first();
+    const sesiId = sesi ? sesi.id : 'trk1';
+    await DB2.prepare('INSERT INTO posisi (sesi_id, jamaah_id, lat, lng, akurasi, sumber, waktu) VALUES (?,?,?,?,?,?,?)')
+      .bind(sesiId, jamaahId, lat, lng, 20, sumber, nowISO()).run();
+    const tk = await titikSesi(sesiId);
+    const dm = dalamTitikMana(tk, lat, lng);
+    const kej = [];
+    if (sumber === 'sos') kej.push(['sos', dm ? dm.t.nama : null, 'Tombol SOS ditekan jamaah']);
+    if (sumber === 'checkin') kej.push(['checkin', dm ? dm.t.nama : null, dm ? 'Check-in di ' + dm.t.nama : 'Check-in (di luar titik)']);
+    if (dm) kej.push(['masuk_titik', dm.t.nama, 'Terdeteksi di titik ' + dm.t.nama]);
+    for (const k of kej) {
+      await DB2.prepare('INSERT INTO kejadian (sesi_id, jamaah_id, tipe, zona_titik, keterangan, waktu) VALUES (?,?,?,?,?,?)')
+        .bind(sesiId, jamaahId, k[0], k[1], k[2], nowISO()).run();
+    }
+    return { titik: dm ? dm.t.nama : null, jarak: dm ? dm.jarak : null };
+  }
+
+  if (path === '/api/pub/checkin' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const m = await DB.prepare('SELECT * FROM jamaah WHERE id=?').bind(String(b.jamaahId || '')).first();
+    if (!m) return j({ ok: false, error: 'jamaah tidak dikenali' }, 404);
+    if (!Number.isFinite(b.lat) || !Number.isFinite(b.lng)) return j({ ok: false, error: 'aktifkan GPS' }, 400);
+    const r = await catatPosisi(DB, m.id, b.lat, b.lng, 'checkin');
+    const wk = await waKetua(m.regu);
+    // absensi: bila ada acara aktif dgn titik -> hadir bila masuk radius titik acara
+    let absensi = null;
+    const ev = await DB.prepare('SELECT * FROM absensi_event WHERE ditutup=0 ORDER BY waktu DESC LIMIT 1').first();
+    if (ev) {
+      const tt = await DB.prepare('SELECT * FROM titik WHERE id=?').bind(ev.titik_id || '').first();
+      const d = tt ? jarakM(b.lat, b.lng, tt.lat, tt.lng) : Infinity;
+      if (tt && d <= tt.radius) {
+        await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, lat, lng, waktu, oleh) VALUES (?,?,?,?,?,?,?,?)')
+          .bind(ev.id, m.id, 'hadir', 'checkin', b.lat, b.lng, nowISO(), 'kartu').run();
+        absensi = { hadir: true, acara: ev.nama, titik: tt.nama };
+      } else if (tt) {
+        absensi = { hadir: false, acara: ev.nama, titik: tt.nama, sisaMeter: Math.round(d - tt.radius) };
+      }
+    }
+    return j({ ok: true, jamaah: m.nama, titik: r.titik, waKetua: wk ? wk.wa : '', waKetuaNama: wk ? wk.nama : '', absensi });
+  }
+
+  if (path === '/api/pub/sos' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const m = await DB.prepare('SELECT * FROM jamaah WHERE id=?').bind(String(b.jamaahId || '')).first();
+    if (!m) return j({ ok: false, error: 'jamaah tidak dikenali' }, 404);
+    const lat = Number.isFinite(b.lat) ? b.lat : -6.9932, lng = Number.isFinite(b.lng) ? b.lng : 110.4203;
+    const r = await catatPosisi(DB, m.id, lat, lng, 'sos');
+    const wk = await waKetua(m.regu);
+    return j({ ok: true, jamaah: m.nama, regu: m.regu, titik: r.titik, waKetua: wk ? wk.wa : '', waKetuaNama: wk ? wk.nama : '' });
+  }
+
+  /* ---------- ABSENSI (terikat titik) ---------- */
+  if (path === '/api/absensi/aktif' && method === 'GET') {
+    const ev = await DB.prepare('SELECT e.id, e.nama, e.regu, e.waktu, t.nama AS titik_nama, t.lat, t.lng, t.radius FROM absensi_event e LEFT JOIN titik t ON t.id=e.titik_id WHERE e.ditutup=0 ORDER BY e.waktu DESC LIMIT 1').first();
+    return j({ ok: true, event: ev || null });
+  }
+  if (path === '/api/absensi/event' && method === 'POST') {
+    if (!USER) return tolak();
+    if (!['admin', 'ketrom', 'ketua-regu'].includes(USER.peran)) return j({ ok: false, error: 'tidak diizinkan' }, 403);
+    const b = await request.json().catch(() => ({}));
+    // tutup acara lain yang masih terbuka (satu acara aktif agar check-in tak ambigu)
+    await DB.prepare('UPDATE absensi_event SET ditutup=1 WHERE ditutup=0').run();
+    const regu = USER.peran === 'ketua-regu' ? (USER.regu || '') : String(b.regu || '');
+    const id = idAcak('ab');
+    const nama = String(b.nama || 'Absensi ' + new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })).slice(0, 80);
+    await DB.prepare('INSERT INTO absensi_event (id, nama, titik_id, sesi_id, regu, waktu, ditutup, oleh) VALUES (?,?,?,?,?,?,0,?)')
+      .bind(id, nama, String(b.titikId || ''), 'trk1', regu, nowISO(), USER.username).run();
+    return j({ ok: true, id, nama });
+  }
+  if (path === '/api/absensi/tutup' && method === 'POST') {
+    if (!USER) return tolak();
+    const b = await request.json().catch(() => ({}));
+    await DB.prepare('UPDATE absensi_event SET ditutup=1 WHERE id=?').bind(String(b.id || '')).run();
+    return j({ ok: true });
+  }
+  if (path === '/api/absensi/event' && method === 'GET') {
+    if (!USER) return tolak();
+    let rows = (await DB.prepare('SELECT e.*, t.nama AS titik_nama FROM absensi_event e LEFT JOIN titik t ON t.id=e.titik_id ORDER BY e.waktu DESC LIMIT 30').all()).results || [];
+    if (USER.peran === 'ketua-regu') { const r = (USER.regu || '').trim(); rows = rows.filter(e => !e.regu || e.regu === r); }
+    const out = [];
+    for (const e of rows) {
+      const c = (await DB.prepare("SELECT COUNT(*) n FROM absensi WHERE event_id=? AND status='hadir'").bind(e.id).first()).n;
+      out.push({ ...e, hadir: c });
+    }
+    return j({ ok: true, events: out });
+  }
+  if (path === '/api/absensi/hadir' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const ev = await DB.prepare('SELECT * FROM absensi_event WHERE id=? AND ditutup=0').bind(String(b.eventId || '')).first();
+    if (!ev) return j({ ok: false, error: 'tidak ada acara aktif' }, 404);
+    const m = b.jamaahId ? await DB.prepare('SELECT * FROM jamaah WHERE id=?').bind(String(b.jamaahId)).first() : null;
+    if (!m) return j({ ok: false, error: 'jamaah tidak dikenali' }, 404);
+    const status = String(b.status || 'hadir');
+    if (status !== 'hadir') {
+      if (!USER || !['admin', 'ketrom', 'ketua-regu'].includes(USER.peran)) return j({ ok: false, error: 'penandaan status hanya oleh ketua' }, 403);
+      if (USER.peran === 'ketua-regu' && String(m.regu || '').trim() !== String(USER.regu || '').trim()) return j({ ok: false, error: 'di luar regu Anda' }, 403);
+    }
+    if (status === 'hadir') {
+      await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, lat, lng, waktu, oleh) VALUES (?,?,?,?,?,?,?,?)')
+        .bind(ev.id, m.id, 'hadir', b.sumber || 'manual', Number.isFinite(b.lat) ? b.lat : null, Number.isFinite(b.lng) ? b.lng : null, nowISO(), USER ? USER.username : 'kartu').run();
+    } else {
+      await DB.prepare('INSERT INTO absensi (event_id, jamaah_id, status, sumber, waktu, oleh) VALUES (?,?,?,?,?,?) ON CONFLICT(event_id, jamaah_id) DO UPDATE SET status=excluded.status, sumber=excluded.sumber, waktu=excluded.waktu, oleh=excluded.oleh')
+        .bind(ev.id, m.id, status, 'manual', nowISO(), USER.username).run();
+    }
+    const n = (await DB.prepare("SELECT COUNT(*) n FROM absensi WHERE event_id=? AND status='hadir'").bind(ev.id).first()).n;
+    return j({ ok: true, jamaah: m.nama, status, hadir: n });
+  }
+  if (path === '/api/absensi/rekap' && method === 'GET') {
+    if (!USER) return tolak();
+    const ev = await DB.prepare('SELECT e.*, t.nama AS titik_nama, t.lat AS titik_lat, t.lng AS titik_lng, t.radius AS titik_radius FROM absensi_event e LEFT JOIN titik t ON t.id=e.titik_id WHERE e.id=?').bind(String(url.searchParams.get('event') || '')).first();
+    if (!ev) return j({ ok: false, error: 'acara tidak ditemukan' }, 404);
+    let ms = (await DB.prepare('SELECT * FROM jamaah ORDER BY nama').all()).results || [];
+    if (ev.regu) ms = ms.filter(m => String(m.regu || '').trim() === ev.regu);
+    if (USER.peran === 'ketua-regu') { const r = (USER.regu || '').trim(); ms = ms.filter(m => String(m.regu || '').trim() === r); }
+    const rec = {};
+    (await DB.prepare('SELECT * FROM absensi WHERE event_id=?').bind(ev.id).all()).results.forEach(x => rec[x.jamaah_id] = x);
+    const rows = await Promise.all(ms.map(async m => {
+      const p = (await DB.prepare('SELECT lat, lng, sumber, waktu FROM posisi WHERE jamaah_id=? ORDER BY id DESC LIMIT 1').bind(m.id).first());
+      let dalam = null, sisa = null;
+      if (p && ev.titik_lat != null) {
+        const d = jarakM(p.lat, p.lng, ev.titik_lat, ev.titik_lng);
+        dalam = d <= ev.titik_radius; sisa = Math.max(0, Math.round(d - ev.titik_radius));
+      }
+      return { id: m.id, nama: m.nama, regu: m.regu, punya_gelang: !!m.punya_gelang,
+        status: rec[m.id] ? rec[m.id].status : null, sumber: rec[m.id] ? rec[m.id].sumber : null,
+        waktu: rec[m.id] ? rec[m.id].waktu : null, terakhirPosisi: p ? p.waktu : null, dalamTitik: dalam, sisaMeter: sisa };
+    }));
+    return j({ ok: true, event: ev, rows, total: rows.length, hadir: rows.filter(r => r.status === 'hadir').length });
   }
 
   return j({ ok: false, error: 'endpoint tidak dikenal' }, 404);
