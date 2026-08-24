@@ -18,6 +18,8 @@ const deteksiBrowser = (() => {
   return nama + (plat ? ' di ' + plat : '');
 })();
 
+const bytesToHex = (u8) => Array.from(u8 || []).map(b => b.toString(16).padStart(2, '0')).join('');
+
 /* Radar Gelang — publik. Mode Cari: getar panas-dingin + bar sinyal + bunyikan gelang. */
 export default function RadarPage() {
   const hash = location.hash || '';
@@ -66,10 +68,15 @@ export default function RadarPage() {
       if (!id) return;
       const kini = Date.now();
       const rssi = Number.isFinite(ev.rssi) ? ev.rssi : -100;
+      let svc = '', mfr = '';
+      try {
+        if (ev.serviceData) { const p = []; ev.serviceData.forEach((v, k) => p.push((String(k).replace(/0x/i, '') + ':' + bytesToHex(v)).toUpperCase())); svc = p.join(' '); }
+        if (ev.manufacturerData) { const p = []; ev.manufacturerData.forEach((v, k) => p.push(('MFR' + Number(k).toString(16).padStart(2, '0') + ':' + bytesToHex(v)).toUpperCase())); mfr = p.join(' '); }
+      } catch (e) {}
       const st = pasangRssiRef.current;
-      if (!st[id] || rssi > st[id].rssi) st[id] = { rssi, t: kini };
+      if (!st[id] || rssi > st[id].rssi) st[id] = { rssi, t: kini, svc, mfr };
       for (const k of Object.keys(st)) if (kini - st[k].t > 4000) delete st[k];
-      const list = Object.entries(st).map(([mac, v]) => ({ mac, rssi: v.rssi, pct: rssiKePct(v.rssi) }));
+      const list = Object.entries(st).map(([mac, v]) => ({ mac, rssi: v.rssi, pct: rssiKePct(v.rssi), svc: v.svc || '', mfr: v.mfr || '' }));
       list.sort((a, b) => b.rssi - a.rssi);
       setPasangList(list.slice(0, 12));
       setDeteksi(Object.keys(st).length);
@@ -433,6 +440,16 @@ export default function RadarPage() {
                   </div>
                 );
               })}
+              {pasangList.length > 0 && (
+                <div className="mt-2 bg-slate-50 border border-slate-200 rounded-xl p-2">
+                  <b className="text-[11px] text-slate-500">🧪 Data mentah tag — screenshot kotak ini (buat teknis):</b>
+                  {pasangList.map(t => (
+                    <p key={t.mac} className="text-[10px] font-mono text-slate-600 break-all leading-relaxed">
+                      {namaMap[t.mac]?.nama || 'tag baru'} …{pendek(t.mac)} rssi{t.rssi} | {t.svc || 'svc:-'} {t.mfr || 'mfr:-'}
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {pasangInfo && <p className="text-[12.5px] mt-2 font-bold">{pasangInfo}</p>}
