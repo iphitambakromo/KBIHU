@@ -93,9 +93,11 @@ async function tangani(request, env) {
     for (const m of jamaah) {
       const p = (await DB.prepare('SELECT lat, lng, sumber, waktu FROM posisi WHERE jamaah_id=? ORDER BY id DESC LIMIT 1').bind(m.id).first());
       const dm = p ? dalamTitikMana(titik, p.lat, p.lng) : null;
+      const sosTerbaru = (await DB.prepare("SELECT id FROM kejadian WHERE jamaah_id=? AND tipe='sos' AND ditangani=0 ORDER BY id DESC LIMIT 1").bind(m.id)).first();
       jmFinal.push({ ...m, punya_hp: !!m.punya_hp, punya_gelang: !!m.punya_gelang,
         posisi: p ? { lat: p.lat, lng: p.lng, sumber: p.sumber, waktu: p.waktu } : null,
-        titik: dm ? dm.t.nama : null });
+        titik: dm ? dm.t.nama : null,
+        sosAktif: !!(sosTerbaru && sosTerbaru.id), _sosId: sosTerbaru ? sosTerbaru.id : null });
     }
     const kejadian = (await DB.prepare('SELECT k.*, j.nama FROM kejadian k LEFT JOIN jamaah j ON j.id=k.jamaah_id WHERE k.sesi_id=? ORDER BY k.id DESC LIMIT 20').bind(sesi.id).all()).results || [];
     return j({ ok: true, sesi, titik, jamaah: jmFinal,

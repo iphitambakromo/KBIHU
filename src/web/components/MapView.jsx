@@ -37,8 +37,11 @@ export default function MapView() {
     (async () => {
       const pos = await bacaGPS();
       sayaRef.current = { lat: pos.lat, lng: pos.lng };
-      L.circleMarker([pos.lat, pos.lng], { radius: 9, color: '#fff', weight: 3, fillColor: '#2A6FDB', fillOpacity: 1 })
-        .bindTooltip('📍 Posisi Anda', { permanent: true, direction: 'top' }).addTo(peta);
+      L.marker([pos.lat, pos.lng], {
+        interactive: false,
+        icon: L.divIcon({ className: '', iconSize: [20, 20], iconAnchor: [10, 10],
+          html: '<div class="pulse-wrap" style="--pc:#2A6FDB"><span class="pulse-ring"></span><span class="pulse-ring d2"></span><span class="pulse-core"></span></div>' })
+      }).addTo(peta);
       peta.setView([pos.lat, pos.lng], 16);
     })();
     return () => { peta.remove(); petaRef.current = null; };
@@ -90,8 +93,6 @@ export default function MapView() {
     (state.titik || []).forEach(t => {
       const warna = t.tipe === 'tujuan' ? '#B48A2F' : '#0E7490';
       const c = L.circle([t.lat, t.lng], { radius: t.radius, color: warna, weight: 2, fillOpacity: 0.1 }).addTo(peta);
-      c.bindTooltip(`<span class="lbl-titik">${t.tipe === 'tujuan' ? '🎯' : '📍'} ${t.nama}</span>`,
-        { permanent: true, direction: 'center' });
       c.bindPopup(() => kartuTitik(t), { maxWidth: 300 });
       const p = L.marker([t.lat, t.lng], {
         interactive: false, keyboard: false,
@@ -127,6 +128,31 @@ export default function MapView() {
       titikRef.current[t.id] = { c, p };
     });
   }, [state, bolehKelola, muat, tampilToast, titikAktifAcara]);
+
+  /* marker jamaah di peta (klik = info) */
+  const jamaahRef = useRef({});
+  useEffect(() => {
+    const peta = petaRef.current; if (!peta || !state) return;
+    const jk = (state.jamaah || []).filter(m => m.posisi).map(m => m.id + ':' + m.posisi.lat + ':' + m.posisi.lng + ':' + (m.sosAktif || '')).join('|');
+    if (jk === jamaahRef.current._key) return;
+    jamaahRef.current._key = jk;
+    Object.values(jamaahRef.current).forEach(x => { if (x.m) peta.removeLayer(x.m); });
+    Object.keys(jamaahRef.current).forEach(k => { if (k !== '_key') delete jamaahRef.current[k]; });
+    (state.jamaah || []).forEach(m => {
+      if (!m.posisi) return;
+      const isSOS = m.sosAktif;
+      const warna = isSOS ? '#B4232A' : m.punya_gelang && !m.punya_hp ? '#B48A2F' : '#12855A';
+      const ukuran = isSOS ? 22 : 14;
+      const html = isSOS
+        ? `<div class="pulse-wrap pulse-kuat" style="--pc:${warna}"><span class="pulse-ring"></span><span class="pulse-ring d2"></span><span class="pulse-core" style="width:${ukuran-8}px;height:${ukuran-8}px;font-size:10px;display:flex;align-items:center;justify-content:center">🆘</span></div>`
+        : `<div style="width:${ukuran}px;height:${ukuran}px;border-radius:50%;background:${warna};border:2.5px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35)"></div>`;
+      const m2 = L.marker([m.posisi.lat, m.posisi.lng], {
+        icon: L.divIcon({ className: '', iconSize: [isSOS ? 30 : ukuran, isSOS ? 30 : ukuran], iconAnchor: [isSOS ? 15 : ukuran/2, isSOS ? 15 : ukuran/2], html })
+      }).addTo(peta);
+      m2.bindPopup(`<b>${m.nama}</b><br><small>${m.punya_gelang && !m.punya_hp ? '⌚ gelang' : '📱 HP'} · ${new Date(m.posisi.waktu).toLocaleTimeString('id-ID')} · ${m.titik ? 'di ' + m.titik : 'di luar titik'}</small>${isSOS ? '<br><b style="color:#B4232A">🆘 SOS AKTIF</b>' : ''}`);
+      jamaahRef.current[m.id] = { m: m2 };
+    });
+  }, [state]);
 
   /* aksi dalam kartu popup */
   useEffect(() => {
@@ -213,9 +239,9 @@ export default function MapView() {
         <button className="btn !min-h-[44px] !px-4 !text-[13px] bg-white/95 text-slate-800 border border-slate-200 shadow-md" onClick={pusatkan}>📍</button>
       </div>
       {bolehKelola && (
-        <div className="absolute left-3 bottom-4 z-[500] flex gap-2">
-          <button className="btn btn-utama shadow-lg !px-5" onClick={buatKumpul}>📍 Titik Kumpul</button>
-          <button className={`btn shadow-lg !px-5 ${modeTitik ? 'btn-merah' : 'btn-muda'}`} onClick={mulaiTitikPeta}>🗺️ {modeTitik ? 'Batal' : 'Titik di Peta'}</button>
+        <div className="absolute left-3 bottom-3 z-[500] flex gap-1.5">
+          <button className="h-10 px-3 rounded-xl bg-hijau text-white shadow-md text-[12.5px] font-bold" onClick={buatKumpul}>📍 Titik</button>
+          <button className={`h-10 px-3 rounded-xl shadow-md text-[12.5px] font-bold ${modeTitik ? 'bg-merah text-white' : 'bg-white/95 text-slate-700 border border-slate-200'}`} onClick={mulaiTitikPeta}>🗺️{modeTitik ? ' Batal' : ''}</button>
         </div>
       )}
     </div>
