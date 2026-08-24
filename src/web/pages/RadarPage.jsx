@@ -32,6 +32,8 @@ export default function RadarPage() {
   const pasangScanRef = useRef(null);
   const pasangRssiRef = useRef({});                    // mac -> {rssi, t}
   const pasangHandlerRef = useRef(null);
+  const [deteksi, setDeteksi] = useState(0);        // jumlah tag unik saat scan pasang
+  const emptyTimerRef = useRef(null);
   useEffect(() => { namaMapRef.current = namaMap; }, [namaMap]);
   useEffect(() => {
     (async () => {
@@ -53,11 +55,13 @@ export default function RadarPage() {
       const list = Object.entries(st).map(([mac, v]) => ({ mac, rssi: v.rssi, pct: rssiKePct(v.rssi) }));
       list.sort((a, b) => b.rssi - a.rssi);
       setPasangList(list.slice(0, 12));
+      setDeteksi(Object.keys(st).length);
     };
     pasangHandlerRef.current = h;
     return () => {
       try { navigator.bluetooth?.removeEventListener('advertisementreceived', h); } catch (e) {}
       try { pasangScanRef.current?.stop(); } catch (e) {}
+      clearTimeout(emptyTimerRef.current);
     };
   }, []);
 
@@ -119,6 +123,7 @@ export default function RadarPage() {
   }, [cariId]);
 
   const rssiKePct = (rssi) => Math.max(0, Math.min(100, Math.round((rssi + 90) / 50 * 100)));
+  const pendek = (id) => String(id || '').replace(/=+$/, '').slice(-4); // 4 char terakhir kode tag (tanpa padding base64)
   const rssiKeLabel = (rssi) => {
     if (rssi > -50) return { label: '🎯 DITEMUKAN! Tekan 🔊', warna: 'bg-red-500', vibrate: [100,50,100,50,100,50,100,50,100,50,100] };
     if (rssi > -65) return { label: '🔴 SANGAT DEKAT', warna: 'bg-red-400', vibrate: [100,100,100,100,100,100,100] };
@@ -203,7 +208,7 @@ export default function RadarPage() {
     if (terlapor.current[id] && kini - terlapor.current[id] < 120000) return;
     terlapor.current[id] = kini;
     const nm = namaMapRef.current[id];
-    tambahLog(`⏳ Melaporkan <b>${nm ? nm.nama : (device.name || 'tag')}</b>${nm ? ` <small class="text-slate-400">iTag …${String(id).slice(-4)}</small>` : ''}…`);
+    tambahLog(`⏳ Melaporkan <b>${nm ? nm.nama : (device.name || 'tag')}</b>${nm ? ` <small class="text-slate-400">iTag …${pendek(id)}</small>` : ''}…`);
     try {
       const r = await fetch('/api/pub/ble', { method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ beaconId: id, lat: gps ? gps.lat : undefined, lng: gps ? gps.lng : undefined, oleh: 'gotong-royong', rssi }) });
@@ -215,27 +220,33 @@ export default function RadarPage() {
   }
 
   async function bunyikan(device) {
+    const gagal = (info) => ({ ok: false, info });
     try {
       const server = await device.gatt.connect();
-      let ok = false;
+      const putuskan = () => setTimeout(() => { try { server.disconnect(); } catch (e) {} }, 4000);
       try { const sv = await server.getPrimaryService(0x1802); const ch = await sv.getCharacteristic(0x2A06);
-        await ch.writeValue(new Uint8Array([2])); ok = true;
-        setTimeout(() => { ch.writeValue(new Uint8Array([0])).catch(() => {}); try { server.disconnect(); } catch (e) {} }, 4000);
+        await ch.writeValue(new Uint8Array([2]));
+        setTimeout(() => { ch.writeValue(new Uint8Array([0])).catch(() => {}); }, 1000);
+        putuskan(); return { ok: true, info: 'servis baterai' };
       } catch (e) {}
-      if (!ok) { try { const sv2 = await server.getPrimaryService(0xFFF0); const cs = await sv2.getCharacteristics();
+      try { const sv2 = await server.getPrimaryService(0xFFE0); const ch2 = await sv2.getCharacteristic(0xFFE1);
+        await ch2.writeValue(new Uint8Array([1])); putuskan(); return { ok: true, info: 'servis iTag' }; } catch (e) {}
+      try { const sv3 = await server.getPrimaryService(0xFFF0); const cs = await sv3.getCharacteristics();
         const w = cs.find(c => c.properties.write || c.properties.writeWithoutResponse);
-        if (w) { await w.writeValue(new Uint8Array([1])); ok = true; setTimeout(() => { try { server.disconnect(); } catch (e) {} }, 4000); } } catch (e) {} }
-      return ok;
-    } catch (e) { return false; }
+        if (w) { await w.writeValue(new Uint8Array([1])); putuskan(); return { ok: true, info: 'servis 0xFFF0' }; }
+        return gagal('tag tidak punya servis bunyi yang dikenal');
+      } catch (e) {}
+      return gagal('tag tidak punya servis bunyi yang dikenal');
+    } catch (e) { return gagal('gagal terhubung ke tag'); }
   }
 
   async function pilihTag(untukPasang = false) {
     if (!navigator.bluetooth?.requestDevice) { tambahLog('Butuh Chrome di Android', true); return null; }
     try {
-      const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [0x1802, 0x180F, 0xFFF0] });
+      const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [0x1802, 0x180F, 0xFFF0, 0xFFE0] });
       if (untukPasang) return device;
       const bunyi = await bunyikan(device);
-      tambahLog(bunyi ? '🔊 Gelang dibunyikan — dekati!' : 'Tag terpilih');
+      tambahLog(bunyi.ok ? '🔊 Gelang dibunyikan — dekati!' : 'Tag terpilih (perintah bunyi tidak didukung tag ini)');
       await lapor(device, null);
       return device;
     } catch (e) { return null; }
@@ -249,55 +260,71 @@ export default function RadarPage() {
       setScanAktif(true);
       tambahLog('🟢 Memindai… biarkan layar menyala.');
       navigator.bluetooth.addEventListener('advertisementreceived', ev => lapor(ev.device, ev.rssi));
-    } catch (e) { tambahLog('Gunakan Pilih Tag Manual', true); }
+    } catch (e) { tambahLog(`⚠️ Gagal memindai (${(e && e.name) || 'gagal'}) — pakai 📲 Pilih Tag Manual`, true); }
   }
 
   async function pasangkan() {
     if (!pasangId) return;
-    setPasangInfo('Dekatkan HANYA gelang jamaah ini (±30 cm), pilih tag-nya…');
+    setPasangInfo('Dekatkan HANYA gelang jamaah ini (±30 cm), lalu pilih tag-nya dari daftar…');
     const device = await pilihTag(true);
     if (!device) { setPasangInfo('❌ Tidak ada tag dipilih'); return; }
-    const bunyi = await bunyikan(device);
-    if (!confirm(`Tag "${device.name || device.id}"${bunyi ? ' sudah berbunyi' : ''}. Simpan?`)) { try { device.gatt.disconnect(); } catch (e) {} setPasangInfo('Batal.'); return; }
+    const hasilBunyi = await bunyikan(device);
+    const namaBersih = (pasangNama || 'jamaah').replace(/ \(⌚.*$/, '');
+    setPasangInfo(hasilBunyi.ok
+      ? `🔊 Tag "${device.name || 'tag'}" (⌚ …${pendek(device.id)}) BERBUNYI — ini tag yang benar.`
+      : `Tag terpilih: "${device.name || 'tag'}" (⌚ …${pendek(device.id)}). Perintah bunyi: ${hasilBunyi.info} — wajar, sebagian iTag bunyinya saat tersambung/terputus, bukan lewat web.`);
+    if (!confirm(`Simpankan tag ini untuk ${namaBersih}?`)) { try { device.gatt.disconnect(); } catch (e) {} setPasangInfo('Batal.'); return; }
     try { device.gatt.disconnect(); } catch (e) {}
     const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
       body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: device.id }) });
     const d = await r.json();
-    setPasangInfo(d.ok ? `✅ Tersimpan: ${device.id}` : '❌ Gagal: ' + (d.error || ''));
+    setPasangInfo(d.ok ? `✅ Tersimpan: ${namaBersih} ⌚ …${pendek(device.id)} — tag bisa berbunyi saat koneksi putus (normal)` : '❌ Gagal: ' + (d.error || ''));
   }
 
   /* ===== PASANG VIA SINYAL: tanpa dialog pemilih — tag sinyal-terkuat = tag di tangan ===== */
   async function pasangViaSinyal() {
-    if (!navigator.bluetooth?.requestLEScan) { setPasangInfo('⚠️ Butuh Chrome Android dengan Bluetooth aktif'); return; }
+    if (!navigator.bluetooth?.requestLEScan) { setPasangInfo('⚠️ Browser ini tidak mendukung scan sinyal — pakai 📲 Manual'); return; }
     if (pasangScanRef.current) { hentiPasangSinyal(); setPasangInfo('⏹ Dihentikan'); return; }
     try {
       pasangScanRef.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
       navigator.bluetooth.addEventListener('advertisementreceived', pasangHandlerRef.current);
-      setPasangScan(true);
-      setPasangInfo('📶 Dekatkan HANYA gelang jamaah ini — kunci baris teratas (sinyal terkuat).');
-    } catch (e) { setPasangInfo('⚠️ Gagal memindai — pakai tombol Manual'); }
+      setPasangScan(true); setDeteksi(0);
+      setPasangInfo('📶 Scan aktif — tag yang mendekat akan muncul di daftar. Kunci baris teratas (🎯 = sinyal terkuat).');
+      clearTimeout(emptyTimerRef.current);
+      emptyTimerRef.current = setTimeout(() => {
+        if (Object.keys(pasangRssiRef.current).length === 0)
+          setPasangInfo('📶 Scan berjalan tapi tag belum terlihat. Pastikan: tag menyala, dekat (±1 m), Bluetooth HP aktif. Atau pakai 📲 Manual.');
+      }, 8000);
+    } catch (e) {
+      const nm = (e && e.name) || 'gagal';
+      setPasangInfo(nm === 'NotAllowedError'
+        ? '⚠️ HP menolak izin "memindai perangkat Bluetooth" (izin ini BERBEDA dari izin pilih tag). Buka ikon gembok 🔒 di address bar → Bluetooth → izinkan "memindai" → coba lagi. Atau pakai 📲 Manual.'
+        : `⚠️ Gagal memindai (${nm}: ${(e && e.message) || ''}) — pakai 📲 Manual`);
+    }
   }
   const hentiPasangSinyal = () => {
     try { pasangScanRef.current?.stop(); } catch (e) {}
     pasangScanRef.current = null;
+    clearTimeout(emptyTimerRef.current);
     try { navigator.bluetooth?.removeEventListener('advertisementreceived', pasangHandlerRef.current); } catch (e) {}
-    setPasangScan(false); setPasangList([]); pasangRssiRef.current = {};
+    setPasangScan(false); setPasangList([]); setDeteksi(0); pasangRssiRef.current = {};
   };
   async function kunciTag(mac) {
     if (!pasangId) return;
     hentiPasangSinyal();
+    const namaBersih = (pasangNama || 'jamaah').replace(/ \(⌚.*$/, '');
     const sudah = namaMapRef.current[mac];
-    const pesan = (sudah && sudah.nama !== pasangNama)
-      ? `⚠️ Tag ini sudah terpasang ke ${sudah.nama}. Pindahkan ke ${pasangNama}?`
-      : `Simpan tag ini untuk ${pasangNama}?`;
+    const pesan = (sudah && sudah.nama !== namaBersih)
+      ? `⚠️ Tag ini sudah terpasang ke ${sudah.nama}. Pindahkan ke ${namaBersih}?`
+      : `Simpan tag ini untuk ${namaBersih}?`;
     if (!confirm(pesan)) return;
     const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
       body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: mac }) });
     const d = await r.json();
     if (d.ok) {
-      setNamaMap(m => ({ ...m, [mac]: { nama: pasangNama, regu: '' } }));
-      setPasangInfo(`✅ Tersimpan: ${pasangNama} ⌚ …${String(mac).slice(-4)} — ulangi untuk jamaah berikutnya (tombol ⌚ di dashboard).`);
-      tambahLog(`⌚ <b>${pasangNama}</b> tersandingkan ke tag …${String(mac).slice(-4)}`);
+      setNamaMap(m => ({ ...m, [mac]: { nama: namaBersih, regu: '' } }));
+      setPasangInfo(`✅ Tersimpan: ${namaBersih} ⌚ …${pendek(mac)} — ulangi untuk jamaah berikutnya (tombol ⌚ di dashboard).`);
+      tambahLog(`⌚ <b>${namaBersih}</b> tersandingkan ke tag …${pendek(mac)}`);
     } else setPasangInfo('❌ Gagal: ' + (d.error || ''));
   }
 
@@ -364,15 +391,15 @@ export default function RadarPage() {
           </div>
           {pasangScan && (
             <div className="mt-3 space-y-1.5">
-              <p className="text-[11.5px] text-slate-500 font-bold">Pegang/dekatkan tag-nya — yang sinyal terkuat (baris teratas) yang dikunci:</p>
-              {pasangList.length === 0 && <p className="text-slate-400 text-[12.5px]">Mencari tag… (pastikan Bluetooth aktif & tag menyala)</p>}
+              <p className="text-[11.5px] text-slate-500 font-bold">{deteksi} tag terdeteksi — kunci baris 🎯 teratas (sinyal terkuat = tag di tangan Anda):</p>
+              {pasangList.length === 0 && <p className="text-slate-400 text-[12.5px]">📶 Mencari tag… (tag harus menyala & dekat, ±1 m)</p>}
               {pasangList.map((t, i) => {
                 const nm = namaMap[t.mac];
                 return (
                   <div key={t.mac} className={`flex items-center gap-2 border rounded-xl p-2 ${i === 0 ? 'border-hijau bg-emerald-50' : 'border-slate-200'}`}>
                     <div className="flex-1 min-w-0">
                       <b className="text-[13px] block truncate">{i === 0 ? '🎯 ' : ''}{nm ? nm.nama : 'Tag baru'}</b>
-                      <small className="text-slate-500 text-[11px]">iTag …{String(t.mac).slice(-4)} · {t.rssi} dBm{nm && nm.regu ? ' · ' + nm.regu : ''}</small>
+                      <small className="text-slate-500 text-[11px]">iTag …{pendek(t.mac)} · {t.rssi} dBm{nm && nm.regu ? ' · ' + nm.regu : ''}</small>
                     </div>
                     <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
                       <div className={`h-full ${t.pct > 60 ? 'bg-emerald-500' : t.pct > 30 ? 'bg-amber-400' : 'bg-blue-400'}`} style={{ width: t.pct + '%' }} />
