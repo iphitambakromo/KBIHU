@@ -37,6 +37,7 @@ class RadarModel(val ctx: Context) {
     val macDicatat = mutableStateOf<String?>(null)
 
     private var gpsTerakhir: Location? = null
+    private val deviceCache = HashMap<String, BluetoothDevice>()
     private var lastLaporTime = 0L
     private var lastLaporRssi = 0
     private var lastLaporLat: Double? = null
@@ -51,8 +52,6 @@ class RadarModel(val ctx: Context) {
             }
         }
         override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
-        override fun onProviderEnabled(provider: String?) {}
-        override fun onProviderDisabled(provider: String?) {}
     }
 
     init {
@@ -92,6 +91,7 @@ class RadarModel(val ctx: Context) {
         token.value = null
         userLabel.value = ""
         devices.value = emptyMap()
+        deviceCache.clear()
         statusPesan.value = ""
         ctx.getSharedPreferences("radar_iphi", Context.MODE_PRIVATE).edit().clear().apply()
     }
@@ -135,6 +135,7 @@ class RadarModel(val ctx: Context) {
             var nama: String? = null
             try { nama = result.device.name } catch (e: Exception) {}
             main.post {
+                deviceCache[mac] = result.device
                 devices.value = devices.value + (mac to DevRow(mac, result.rssi, nama, System.currentTimeMillis()))
             }
         }
@@ -151,12 +152,9 @@ class RadarModel(val ctx: Context) {
 
     fun bunyi(mac: String) {
         sedangBunyi.value = "🔊 Konek ke tag " + mac.takeLast(5) + "…"
-        val device: BluetoothDevice? = try {
-            (ctx.getSystemService(Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager)
-                ?.adapter?.getDevice(mac)
-        } catch (e: Exception) { null }
+        val device: BluetoothDevice? = deviceCache[mac]
         if (device == null) {
-            main.post { sedangBunyi.value = "❌ Tag tidak ditemukan — dekatkan & scan lagi" }
+            main.post { sedangBunyi.value = "❌ Tag tidak ditemukan — dekatkan & scan dulu" }
             return
         }
         Gatt.bunyi(ctx, device) { hasil ->

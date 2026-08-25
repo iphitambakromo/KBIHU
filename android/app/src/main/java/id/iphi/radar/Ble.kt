@@ -70,17 +70,17 @@ object Gatt {
         val t = Thread {
             val pesan = try {
                 val latch = CountDownLatch(1)
-                var gatt: BluetoothGatt? = null
-                gatt = device.connectGatt(context, false, object : android.bluetooth.BluetoothGattCallback() {
+                var terhubung = false
+                val gatt: BluetoothGatt? = device.connectGatt(context, false, object : android.bluetooth.BluetoothGattCallback() {
                     override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
-                        if (newState != BluetoothProfile.STATE_CONNECTED && newState != BluetoothProfile.STATE_DISCONNECTED) return
-                        latch.countDown()
+                        terhubung = newState == BluetoothProfile.STATE_CONNECTED
+                        if (newState == BluetoothProfile.STATE_CONNECTED || newState == BluetoothProfile.STATE_DISCONNECTED) latch.countDown()
                     }
                 })
                 if (!latch.await(10, TimeUnit.SECONDS)) {
                     try { gatt?.close() } catch (e: Exception) {}
                     "timeout koneksi ke tag"
-                } else if (gatt?.isConnected != true) {
+                } else if (!terhubung) {
                     try { gatt?.close() } catch (e: Exception) {}
                     "gagal konek ke tag"
                 } else {
