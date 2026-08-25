@@ -33,10 +33,21 @@ jobs:
 
       - name: Build debug APK
         working-directory: android
-        run: /opt/gradle-8.7/bin/gradle assembleDebug --no-daemon --stacktrace
+        run: |
+          /opt/gradle-8.7/bin/gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee ../build.log
+          exit "${PIPESTATUS[0]}"
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: radar-iphi-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Kirim log kegagalan ke Worker (sementara)
+        if: failure()
+        run: |
+          TAIL=$(tail -c 4000 build.log 2>/dev/null || echo "build.log tidak ada")
+          jq -n --arg p "$TAIL" '{path: "android-ci", pesan: $p, level: "error"}' > /tmp/log.json
+          curl -s -m 30 -X POST https://traking.iphi-haji.workers.dev/api/pub/log \
+            -H 'content-type: application/json' --data @/tmp/log.json || true

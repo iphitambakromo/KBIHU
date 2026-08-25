@@ -429,6 +429,17 @@ async function tangani(request, env) {
     return j({ ok: true, jamaah: m.nama, titik: r.titik, absensi });
   }
 
+  /* ---------- SEMENTARA: log CI build APK (dihapus setelah app stabil) ---------- */
+  if (path === '/api/pub/log' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    await DB.prepare('INSERT INTO galat (waktu, path, metode, pesan, level) VALUES (?,?,?,?,?)')
+      .bind(nowISO(), String(b.path || '').slice(0, 100), 'ci', String(b.pesan || '').slice(0, 4000), 'error').run();
+    return j({ ok: true });
+  }
+  if (path === '/api/pub/galat' && method === 'GET') {
+    const rows = (await DB.prepare('SELECT waktu, path, pesan FROM galat ORDER BY id DESC LIMIT 5').all()).results || [];
+    return j({ ok: true, rows });
+  }
 
   /* ---------- LATIHAN MANDIRI ---------- */
   const jamaahByToken = async (tok) => {
