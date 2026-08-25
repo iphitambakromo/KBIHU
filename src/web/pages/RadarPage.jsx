@@ -20,6 +20,33 @@ const deteksiBrowser = (() => {
 
 const bytesToHex = (u8) => Array.from(u8 || []).map(b => b.toString(16).padStart(2, '0')).join('');
 
+/* Baca nama ASLI tag dari GATT (servis 0x1800, char 0x2A00) — untuk sinkron nama
+   di HP yang scan-nya masih menampilkan "iTag" padahal tag sudah di-rename di HP lain. */
+async function bacaNamaGATT(dev) {
+  let server = null;
+  try { server = await dev.gatt.connect(); }
+  catch (e) { return { err: 'gagal konek ke tag (' + ((e && e.name) || 'gagal') + ')' }; }
+  try {
+    const dec = (buf) => new TextDecoder().decode(buf).replace(/\u0000/g, '').trim();
+    let nama = '';
+    try {
+      const svc = await server.getPrimaryService(0x1800);
+      nama = dec(await (await svc.getCharacteristic(0x2A00)).readValue());
+    } catch (e) {
+      const svcs = await server.getPrimaryServices();
+      for (const s of svcs) {
+        try {
+          const cs = await s.getCharacteristics();
+          const target = cs.find(c => String(c.uuid || '').toLowerCase().endsWith('2a00'));
+          if (target) { nama = dec(await target.readValue()); break; }
+        } catch (e2) {}
+      }
+    }
+    return { nama };
+  } catch (e) { return { err: 'gagal baca nama tag (' + ((e && e.name) || 'gagal') + ')' }; }
+  finally { try { if (dev.gatt && dev.gatt.connected) dev.gatt.disconnect(); } catch (e) {} }
+}
+
 /* Radar Gelang — publik. Mode Cari: getar panas-dingin + bar sinyal + bunyikan gelang. */
 export default function RadarPage() {
   const hash = location.hash || '';
@@ -52,6 +79,9 @@ export default function RadarPage() {
   const pasangRssiRef = useRef({});                    // mac -> {rssi, t}
   const pasangHandlerRef = useRef(null);
   const [deteksi, setDeteksi] = useState(0);        // jumlah tag unik saat scan pasang
+  const [sinkron, setSinkron] = useState('');       // pesan status sinkron nama tag
+  const [sinkroning, setSinkroning] = useState(''); // mac yang sedang disinkron, atau 'semua'
+  const sinkronNamaRef = useRef({});                // mac -> nama asli (hasil GATT), biar tidak ter-overwrite iklan ulang
   const emptyTimerRef = useRef(null);
   useEffect(() => { namaMapRef.current = namaMap; }, [namaMap]);
   useEffect(() => {
@@ -74,9 +104,11 @@ export default function RadarPage() {
         if (ev.manufacturerData) { const p = []; ev.manufacturerData.forEach((v, k) => p.push(('MFR' + Number(k).toString(16).padStart(2, '0') + ':' + bytesToHex(v)).toUpperCase())); mfr = p.join(' '); }
       } catch (e) {}
       const st = pasangRssiRef.current;
-      if (!st[id] || rssi > st[id].rssi) st[id] = { rssi, t: kini, svc, mfr, nm: ev.device.name || '' };
+      const nmSinkron = sinkronNamaRef.current[id];
+      if (!st[id] || rssi > st[id].rssi) st[id] = { rssi, t: kini, svc, mfr, nm: nmSinkron || ev.device.name || '', dev: ev.device };
+      else st[id].t = kini;
       for (const k of Object.keys(st)) if (kini - st[k].t > 4000) delete st[k];
-      const list = Object.entries(st).map(([mac, v]) => ({ mac, rssi: v.rssi, pct: rssiKePct(v.rssi), svc: v.svc || '', mfr: v.mfr || '', nm: v.nm || '' }));
+      const list = Object.entries(st).map(([mac, v]) => ({ mac, rssi: v.rssi, pct: rssiKePct(v.rssi), svc: v.svc || '', mfr: v.mfr || '', nm: v.nm || '', dev: v.dev }));
       list.sort((a, b) => b.rssi - a.rssi);
       setPasangList(list.slice(0, 12));
       setDeteksi(Object.keys(st).length);
@@ -356,6 +388,53 @@ export default function RadarPage() {
     } else setPasangInfo('❌ Gagal: ' + (d.error || ''));
   }
 
+  /* ===== SINKRON NAMA TAG: konek sebentar ke tag (tag bunyi), baca nama asli dari GATT =====
+     Untuk HP yang scan-nya masih menampilkan "iTag" padahal tag sudah di-rename di HP lain. */
+  const sinkronSatu = async (t) => {
+    if (sinkroning) return;
+    const dev = t.dev;
+    if (!dev || !dev.gatt) { setSinkron('⚠️ Tag ini belum tersedia utk konek — dekati tag lalu biarkan scan menyegarkannya.'); return; }
+    setSinkroning(t.mac);
+    setSinkron(`🔄 Sinkron "${t.nm || 'tag …' + pendek(t.mac)}" — tag akan konek sebentar & bunyi…`);
+    const r = await bacaNamaGATT(dev);
+    setSinkroning('');
+    if (r.err) { setSinkron('⚠️ ' + r.err + ' — coba lagi saat tag lebih dekat.'); return; }
+    if (!r.nama) { setSinkron(`⚠️ Tag …${pendek(t.mac)} tidak mengumumkan nama lewat GATT.`); return; }
+    sinkronNamaRef.current[t.mac] = r.nama;
+    const st = pasangRssiRef.current;
+    if (st[t.mac]) st[t.mac].nm = r.nama;
+    setPasangList(l => l.map(x => x.mac === t.mac ? { ...x, nm: r.nama } : x));
+    setSinkron(`✅ Nama asli tag: "${r.nama}"` + (r.nama !== t.nm ? ' — nama di HP ini sudah diperbarui, sekarang bisa 🔒 dikunci.' : ''));
+  };
+  const sinkronSemua = async () => {
+    if (sinkroning || pasangList.length === 0) return;
+    const daftar = [...pasangList].sort((a, b) => b.rssi - a.rssi);
+    setSinkroning('semua');
+    const hasil = [];
+    for (let i = 0; i < daftar.length; i++) {
+      const t = daftar[i];
+      setSinkron(`🔄 Sinkron ${(i + 1)}/${daftar.length}: "${t.nm || 'tag …' + pendek(t.mac)}" — tag bunyi saat konek…`);
+      const dev = t.dev;
+      if (!dev || !dev.gatt) { hasil.push({ dulu: t.nm || '…' + pendek(t.mac), kini: 'gagal' }); continue; }
+      const r = await bacaNamaGATT(dev);
+      if (r.err) hasil.push({ dulu: t.nm || '…' + pendek(t.mac), kini: 'gagal' });
+      else if (!r.nama) hasil.push({ dulu: t.nm || '…' + pendek(t.mac), kini: 'tanpa nama' });
+      else {
+        sinkronNamaRef.current[t.mac] = r.nama;
+        const st = pasangRssiRef.current;
+        if (st[t.mac]) st[t.mac].nm = r.nama;
+        setPasangList(l => l.map(x => x.mac === t.mac ? { ...x, nm: r.nama } : x));
+        hasil.push({ dulu: t.nm || '…' + pendek(t.mac), kini: r.nama });
+      }
+      await new Promise(res => setTimeout(res, 400));
+    }
+    setSinkroning('');
+    const gagal = hasil.filter(h => h.kini === 'gagal').length;
+    const masihDefault = hasil.some(h => h.kini === 'iTag');
+    setSinkron(`✅ Sinkron selesai: ${hasil.length - gagal}/${daftar.length} tag. Nama terbaca: ` + hasil.map(h => `"${h.kini}"`).join(', ') +
+      (masihDefault ? ' — ⚠️ masih ada "iTag": rename tag itu belum tersimpan di TAG-nya (hanya di HP yang melakukan rename). Screenshot layar rename di app iTag, kirim ke petugas teknis.' : ''));
+  };
+
   return (
     <div className="min-h-full bg-[#EEF3F0] p-3 pb-10 max-w-2xl mx-auto">
       <div className="bg-gradient-to-r from-hijau to-hijau2 text-white rounded-2xl p-4 text-center">
@@ -427,6 +506,12 @@ export default function RadarPage() {
           {pasangScan && (
             <div className="mt-3 space-y-1.5">
               <p className="text-[11.5px] text-slate-500 font-bold">{deteksi} tag terdeteksi — kunci baris 🎯 teratas (sinyal terkuat = tag di tangan Anda):</p>
+              <div className="flex items-center gap-2">
+                <button className={`btn btn-muda !min-h-[38px] !px-3 !text-[12px]`} disabled={!!sinkroning || pasangList.length === 0} onClick={sinkronSemua}>
+                  {sinkroning === 'semua' ? '⏳ Sinkron…' : '🔄 Sinkron Semua Nama Tag'}
+                </button>
+                <small className="text-slate-400 text-[10.5px] leading-tight flex-1">HP ini masih baca tag yang sudah di-rename sebagai "iTag"? Tekan — HP konek sebentar ke tiap tag (tag bunyi) & nama aslinya langsung terbaca.</small>
+              </div>
               {(() => { const atas = pasangList[0]; const bersih = (pasangNama || '').replace(/ \(⌚.*$/, ''); if (atas && atas.nm && bersih && atas.nm !== bersih) return <p className="text-[11.5px] text-amber-700 font-bold">⚠️ Nama tag terkuat "{atas.nm}" berbeda dari "{bersih}" — pastikan tag-nya yang benar.</p>; return null; })()}
               {pasangList.length === 0 && <p className="text-slate-400 text-[12.5px]">📶 Mencari tag… (tag harus menyala & dekat, ±1 m)</p>}
               {pasangList.map((t, i) => {
@@ -440,6 +525,9 @@ export default function RadarPage() {
                     <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
                       <div className={`h-full ${t.pct > 60 ? 'bg-emerald-500' : t.pct > 30 ? 'bg-amber-400' : 'bg-blue-400'}`} style={{ width: t.pct + '%' }} />
                     </div>
+                    <button className="btn btn-muda !min-h-[36px] !px-2.5 !text-[12px]" title="Sinkron nama tag (konek sebentar, tag bunyi)" disabled={!!sinkroning} onClick={() => sinkronSatu(t)}>
+                      {sinkroning === t.mac ? '⏳' : '🔄'}
+                    </button>
                     <button className="btn btn-utama !min-h-[36px] !px-2.5 !text-[12px]" onClick={() => kunciTag(t.mac, t.nm)}>🔒</button>
                   </div>
                 );
@@ -456,9 +544,10 @@ export default function RadarPage() {
               )}
             </div>
           )}
+          {sinkron && <p className="text-[12px] mt-2 font-bold text-slate-700">{sinkron}</p>}
           {pasangInfo && <p className="text-[12.5px] mt-2 font-bold">{pasangInfo}</p>}
           <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
-            💡 Tag sudah di-rename jadi nama jamaah (app iTag + cabut baterai)? Radar di HP mana pun langsung mengenali lewat nama. Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda.
+            💡 Tag sudah di-rename jadi nama jamaah (app iTag + cabut baterai)? Radar di HP mana pun langsung mengenali lewat nama. Di HP yang scan-nya masih "iTag" → tekan 🔄 dulu (sekali per HP), baru 🔒. Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda.
           </p>
         </div>
       )}
