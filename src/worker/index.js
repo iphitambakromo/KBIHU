@@ -400,6 +400,35 @@ async function tangani(request, env) {
     return j({ ok: true, jamaah: m.nama, titik: r.titik, absensi });
   }
 
+  /* ---------- PUBLIK: radar MAC (app Android native) — MAC = identitas tetap tag, jalan di HP mana pun ---------- */
+  if (path === '/api/pub/mac' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const hex = String(b.mac || '').trim().toUpperCase().replace(/[^0-9A-F]/g, '');
+    if (hex.length !== 12) return j({ ok: false, error: 'mac wajib (contoh FF:FF:12:A4:9C:44)' }, 400);
+    const macV = hex.match(/.{2}/g).join(':');
+    const m = await DB.prepare('SELECT * FROM jamaah WHERE mac_tag=?').bind(macV).first();
+    if (!m) return j({ ok: false, error: 'MAC belum terdaftar di Daftar MAC — catat dulu di dashboard' }, 404);
+    if (!Number.isFinite(b.lat) || !Number.isFinite(b.lng)) return j({ ok: false, error: 'aktifkan GPS radar' }, 400);
+    const r = await catatPosisi(DB, m.id, b.lat, b.lng, 'ble');
+    const sig = Number.isFinite(b.rssi) ? ' (sinyal ' + Math.round(b.rssi) + ' dBm)' : '';
+    await DB.prepare('INSERT INTO kejadian (sesi_id, jamaah_id, tipe, zona_titik, keterangan, waktu) VALUES (?,?,?,?,?,?)')
+      .bind('trk1', m.id, 'ble', r.titik, `Gelang (MAC) terlihat radar HP${sig}${b.oleh ? ' (' + String(b.oleh).slice(0, 40) + ')' : ''}`, nowISO()).run();
+    let absensi = null;
+    const ev = await DB.prepare('SELECT * FROM absensi_event WHERE ditutup=0 ORDER BY waktu DESC LIMIT 1').first();
+    if (ev) {
+      const tt = await DB.prepare('SELECT * FROM titik WHERE id=?').bind(ev.titik_id || '').first();
+      const d = tt ? jarakM(b.lat, b.lng, tt.lat, tt.lng) : Infinity;
+      if (tt && d <= tt.radius) {
+        await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, lat, lng, waktu, oleh) VALUES (?,?,?,?,?,?,?,?)')
+          .bind(ev.id, m.id, 'hadir', 'gelang', b.lat, b.lng, nowISO(), String(b.oleh || 'radar').slice(0, 40)).run();
+        absensi = { hadir: true, acara: ev.nama, titik: tt.nama };
+      } else if (tt) {
+        absensi = { hadir: false, acara: ev.nama, titik: tt.nama, sisaMeter: Math.round(d - tt.radius) };
+      }
+    }
+    return j({ ok: true, jamaah: m.nama, titik: r.titik, absensi });
+  }
+
 
   /* ---------- LATIHAN MANDIRI ---------- */
   const jamaahByToken = async (tok) => {
