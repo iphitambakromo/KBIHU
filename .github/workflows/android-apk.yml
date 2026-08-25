@@ -47,7 +47,8 @@ jobs:
       - name: Kirim log kegagalan ke Worker (sementara)
         if: failure()
         run: |
-          TAIL=$(tail -c 4000 build.log 2>/dev/null || echo "build.log tidak ada")
-          jq -n --arg p "$TAIL" '{path: "android-ci", pesan: $p, level: "error"}' > /tmp/log.json
+          DETAIL=$(grep -aE "^e: |error:|What went wrong|Execution failed|> Task .* FAILED" build.log 2>/dev/null | head -60)
+          TAIL=$(tail -c 3500 build.log 2>/dev/null || echo "build.log tidak ada")
+          jq -n --arg p "$DETAIL"$'\n\n--- TAIL ---\n\n'"$TAIL" '{path: "android-ci", pesan: $p, level: "error"}' > /tmp/log.json
           curl -s -m 30 -X POST https://traking.iphi-haji.workers.dev/api/pub/log \
             -H 'content-type: application/json' --data @/tmp/log.json || true

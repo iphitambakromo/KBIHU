@@ -14,9 +14,7 @@ import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import org.json.JSONObject
 
 const val BASE_DEFAULT = "https://traking.iphi-haji.workers.dev"
@@ -45,11 +43,16 @@ class RadarModel(val ctx: Context) {
     private var lastLaporLng: Double? = null
     private var tickJob: Runnable? = null
 
-    private val lokasiListener = LocationListener { loc ->
-        gpsTerakhir = loc
-        main.post {
-            gpsPesan.value = "📍 GPS ±" + Math.round(loc.accuracy).toInt() + " m — posisi dilaporkan otomatis"
+    private val lokasiListener = object : LocationListener {
+        override fun onLocationChanged(location: Location) {
+            gpsTerakhir = location
+            main.post {
+                gpsPesan.value = "📍 GPS ±" + Math.round(location.accuracy).toInt() + " m — posisi dilaporkan otomatis"
+            }
         }
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        override fun onProviderEnabled(provider: String?) {}
+        override fun onProviderDisabled(provider: String?) {}
     }
 
     init {
@@ -192,8 +195,8 @@ class RadarModel(val ctx: Context) {
                     gpsTerakhir = last
                     main.post { gpsPesan.value = "📍 GPS ±" + Math.round(last.accuracy).toInt() + " m" }
                 }
-                lm.requestSingleUpdate(LocationManager.NETWORK_PROVIDER, lokasiListener, main)
-                lm.requestSingleUpdate(LocationManager.GPS_PROVIDER, lokasiListener, main)
+                lm.requestSingleUpdate(LocationManager.NETWORK_PROVIDER, lokasiListener, Looper.getMainLooper())
+                lm.requestSingleUpdate(LocationManager.GPS_PROVIDER, lokasiListener, Looper.getMainLooper())
             }
         } catch (e: Exception) {
         }

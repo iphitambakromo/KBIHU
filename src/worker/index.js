@@ -433,7 +433,7 @@ async function tangani(request, env) {
   if (path === '/api/pub/log' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     await DB.prepare('INSERT INTO galat (waktu, path, metode, pesan, level) VALUES (?,?,?,?,?)')
-      .bind(nowISO(), String(b.path || '').slice(0, 100), 'ci', String(b.pesan || '').slice(0, 4000), 'error').run();
+      .bind(nowISO(), String(b.path || '').slice(0, 100), 'ci', String(b.pesan || '').slice(0, 12000), 'error').run();
     return j({ ok: true });
   }
   if (path === '/api/pub/galat' && method === 'GET') {
