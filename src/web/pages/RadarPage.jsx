@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
+import { normMac } from '../../lib/mac.js';
 
 /* Deteksi browser utk pesan panduan (scan BLE cuma ada di Chrome Android) */
 const deteksiBrowser = (() => {
@@ -74,6 +75,14 @@ export default function RadarPage() {
   const getarRef = useRef(null);
   const bunyiRef = useRef(0);
   const [bunyiCooldown, setBunyiCooldown] = useState(0);
+  /* MAC gotong royong: daftar MAC terdaftar (identitas global) + MAC jamaah yang sedang dipasangkan */
+  const [macDaftar, setMacDaftar] = useState([]);
+  const [pasangMac, setPasangMac] = useState('');
+  const [pasangOtomatisA, setPasangOtomatisA] = useState(false);
+  const pasangMacRef = useRef('');
+  const pasangModeRef = useRef(false);
+  const macPeta = {};
+  for (const x of macDaftar) { const k = normMac(x.mac_tag); if (k) macPeta[k] = x; }
   /* MAC -> nama jamaah (membedakan iTag yang namanya seragam) */
   const [namaMap, setNamaMap] = useState({});          // mac -> {nama, regu}
   const namaMapRef = useRef({});
@@ -95,6 +104,18 @@ export default function RadarPage() {
         if (d.ok) { const m = {}; (d.gelang || []).forEach(g => { m[g.mac] = g; }); setNamaMap(m); }
       } catch (e) {}
     })();
+  }, []);
+  /* daftar MAC global (publik) — identitas yang sama di semua HP */
+  useEffect(() => {
+    (async () => {
+      try { const d = await fetch('/api/pub/mac').then(r => r.json()); if (d.ok) setMacDaftar(d.daftar || []); } catch (e) {}
+    })();
+  }, []);
+  useEffect(() => { pasangMacRef.current = pasangMac; }, [pasangMac]);
+  useEffect(() => () => {
+    try { scanHandle.current?.stop(); } catch (e) {}
+    try { cariScanRef.current?.stop(); } catch (e) {}
+    try { pasangScanRef.current?.stop(); } catch (e) {}
   }, []);
   useEffect(() => {
     const h = (ev) => {
@@ -161,7 +182,8 @@ export default function RadarPage() {
       const st = await fetch('/api/state', { headers: { authorization: 'Bearer ' + TOK } }).then(r => r.json());
       const m = (st.jamaah || []).find(x => x.id === pasangId);
       if (m) {
-        setPasangNama(m.nama + (m.beacon_id ? ' (⌚ ' + m.beacon_id + ')' : ''));
+        setPasangMac(m.mac_tag || '');
+        setPasangNama(m.nama + (m.mac_tag ? ' (⌚ ' + m.mac_tag + ')' : m.beacon_id ? ' (⌚ ' + m.beacon_id + ')' : ''));
       }
     })();
   }, [pasangId]);
@@ -173,11 +195,11 @@ export default function RadarPage() {
     if (!cariId) return;
     (async () => {
       const r = await fetch('/api/pub/cari-mulai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jamaahId: cariId }) }).then(x => x.json());
-      if (r.ok && r.jamaah.punya_gelang && r.jamaah.beacon_id) {
+      if (r.ok && r.jamaah.punya_gelang && (r.jamaah.beacon_id || r.jamaah.mac_tag)) {
         setCari(r.jamaah);
         setCariStatus('🔵 JAUH — mulai berjalan perlahan ke segala arah');
-        tambahLog(`🔍 <b>Mode Cari dimulai</b> untuk ${r.jamaah.nama}`);
-        mulaiCariScan(r.jamaah.beacon_id);
+        tambahLog(`🔍 <b>Mode Cari dimulai</b> untuk ${r.jamaah.nama}${r.jamaah.mac_tag ? ' — via MAC global, tanpa pasang ulang' : ''}`);
+        mulaiCariScan(r.jamaah.beacon_id || '', r.jamaah.mac_tag || '');
       } else if (r.ok) {
         tambahLog(`⚠️ ${r.jamaah?.nama || 'Jamaah'} belum punya gelang terpasang — pasangkan dulu lewat Kelola Jamaah`, true);
       }
@@ -195,13 +217,16 @@ export default function RadarPage() {
     return { label: '🔵 JAUH — jalan perlahan', warna: 'bg-blue-400', vibrate: [200,4000] };
   };
 
-  const mulaiCariScan = async (beaconId) => {
+  const mulaiCariScan = async (beaconId, macTag) => {
     if (!navigator.bluetooth) { setCariStatus('⚠️ Browser tidak mendukung bluetooth — gunakan Chrome Android'); return; }
     try {
       cariScanRef.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
       navigator.bluetooth.addEventListener('advertisementreceived', ev => {
         if (!cariRef.current) return;
-        if (ev.device.id !== beaconId && ev.device.name !== beaconId) return;
+        const id = ev.device.id || ev.device.name;
+        const nm = normMac(ev.device?.name);
+        // cocok: ID perangkat lokal, nama siaran (pasang lama), atau MAC global
+        if (id !== beaconId && ev.device.name !== beaconId && !(macTag && nm === macTag)) return;
         const rssi = ev.rssi || -100;
         const pct = rssiKePct(rssi);
         const info = rssiKeLabel(rssi);
@@ -220,7 +245,7 @@ export default function RadarPage() {
   };
 
   const bunyikanGelang = async () => {
-    if (!cari || !cari.beacon_id) return;
+    if (!cari || (!cari.beacon_id && !cari.mac_tag)) return;
     if (Date.now() - bunyiRef.current < 5000) { setBunyiCooldown(Math.ceil((5000 - (Date.now() - bunyiRef.current)) / 1000)); return; }
     bunyiRef.current = Date.now();
     setBunyiCooldown(5);
@@ -232,17 +257,23 @@ export default function RadarPage() {
         acceptAllDevices: true,
         optionalServices: [0x1802, 0xFCF1, 0xFFF0, 0xFFE0]
       });
+      // validasi: kalau MAC terdaftar, tag terpilih harus milik jamaah yang dicari
+      if (cari.mac_tag && normMac(device.name) !== cari.mac_tag) {
+        tambahLog(`⚠️ Tag terpilih bukan milik ${cari.nama} — pilih tag bernama <b>${cari.mac_tag}</b>`, true);
+        return;
+      }
       const server = await device.gatt.connect();
       try {
         const sv = await server.getPrimaryService(0x1802);
         const ch = await sv.getCharacteristic(0x2A06);
         await ch.writeValue(new Uint8Array([2]));
+        tambahLog('🔊 Gelang dibunyikan — dekati!');
         setTimeout(async () => { try { await ch.writeValue(new Uint8Array([0])); } catch (e) {} try { server.disconnect(); } catch (e) {} }, 3500);
       } catch (e) {
         try { const sv2 = await server.getPrimaryService(0xFFF0);
           const cs = await sv2.getCharacteristics();
           const w = cs.find(c => c.properties.write || c.properties.writeWithoutResponse);
-          if (w) { await w.writeValue(new Uint8Array([1])); setTimeout(() => { try { server.disconnect(); } catch (e) {} }, 3500); }
+          if (w) { await w.writeValue(new Uint8Array([1])); tambahLog('🔊 Gelang dibunyikan — dekati!'); setTimeout(() => { try { server.disconnect(); } catch (e) {} }, 3500); }
         } catch (e2) {}
       }
     } catch (e) { setCariStatus('Pembatalan — tidak ada tag dipilih'); }
@@ -267,18 +298,19 @@ export default function RadarPage() {
 
   async function lapor(device, rssi) {
     const id = device.id || device.name;
+    const mac = normMac(device.name);
     const kini = Date.now();
     if (terlapor.current[id] && kini - terlapor.current[id] < 120000) return;
     terlapor.current[id] = kini;
-    const nm = namaMapRef.current[id] || (device.name ? namaMapRef.current[device.name] : undefined);
-    tambahLog(`⏳ Melaporkan <b>${nm ? nm.nama : (device.name || 'tag')}</b>${nm ? ` <small class="text-slate-400">iTag …${pendek(id)}</small>` : ''}…`);
+    const jm = (mac && macPeta[mac]) || namaMapRef.current[id] || (device.name ? namaMapRef.current[device.name] : undefined);
+    tambahLog(jm ? `⏳ Melaporkan <b>${jm.nama}</b>${jm.regu ? ` (${jm.regu})` : ''}…` : `⏳ Melaporkan <b>${device.name || 'tag'}</b>…`);
     try {
       const r = await fetch('/api/pub/ble', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ beaconId: id, nama: device.name || '', lat: gps ? gps.lat : undefined, lng: gps ? gps.lng : undefined, oleh: 'gotong-royong', rssi }) });
+        body: JSON.stringify({ beaconId: id, macTag: mac || undefined, nama: device.name || '', lat: gps ? gps.lat : undefined, lng: gps ? gps.lng : undefined, oleh: 'gotong-royong', rssi }) });
       const d = await r.json();
       if (d.ok) tambahLog(`✅ <b>${d.jamaah}</b> tercatat${d.titik ? ' — di ' + d.titik : ''}${labelJarak(rssi) ? ' · ' + labelJarak(rssi) : ''}` +
           (d.absensi?.hadir ? ` · <b>HADIR</b>` : ''));
-      else tambahLog(`⚠️ Tag tidak terdaftar`, true);
+      else tambahLog(`⚠️ Tag tidak terdaftar — isi MAC-nya di Kelola Jamaah (✏️)`, true);
     } catch (e) { tambahLog('❌ Gagal kirim — periksa internet', true); }
   }
 
@@ -327,27 +359,85 @@ export default function RadarPage() {
     } catch (e) { tambahLog(`⚠️ Gagal memindai (${(e && e.name) || 'gagal'}) — pakai 📲 Pilih Tag Manual`, true); }
   }
 
+  /* ===== PASANG OTOMATIS VIA MAC (gotong royong): tag yang MAC-nya cocok = langsung tersimpan ===== */
+  const macAsli = (nm) => { const k = normMac(nm); return /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(k) ? k : ''; };
+  const simpanHasilPasang = async (device, mac) => {
+    const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
+      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: device.id, mac_tag: mac || undefined }) });
+    return await r.json();
+  };
+  const muatMacDaftar = () => (async () => {
+    try { const x = await fetch('/api/pub/mac').then(rr => rr.json()); if (x.ok) setMacDaftar(x.daftar || []); } catch (e) {}
+  })();
+  const pasangListener = (ev) => {
+    if (!pasangModeRef.current) return;
+    const mac = normMac(ev.device?.name);
+    if (!mac || mac !== (pasangMacRef.current || '')) return;
+    pasangModeRef.current = false;
+    (async () => {
+      const bunyi = await bunyikan(ev.device);
+      try { ev.device.gatt.disconnect(); } catch (e) {}
+      const d = await simpanHasilPasang(ev.device, mac);
+      batalkanPasang();
+      setPasangInfo(d.ok ? `✅ Tersimpan — gelang terpasang & dikenali semua HP${bunyi && bunyi.ok ? ' (tag berbunyi)' : ''}` : '❌ Gagal: ' + (d.error || ''));
+      if (d.ok) { muatMacDaftar(); tambahLog(`⌚ <b>${(pasangNama || 'jamaah').replace(/ \(⌚.*$/, '')}</b> tersandingkan via MAC ${mac}`); }
+    })();
+  };
+  function pasangOtomatis() {
+    if (!navigator.bluetooth?.requestLEScan) { setPasangInfo('⚠️ Browser ini tidak bisa memindai — pakai "Pasang via Sinyal" atau 📲 Manual'); return; }
+    if (pasangScanRef.current) { hentiPasangSinyal(); return; } // jangan rangkap scan
+    pasangModeRef.current = true;
+    setPasangOtomatisA(true);
+    setPasangInfo('📡 Memindai otomatis — dekatkan gelang ke HP (±1 m). Tag yang MAC-nya cocok langsung tersimpan. Tekan tombol lagi untuk batal.');
+    (async () => {
+      try {
+        pasangScanRef.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
+        navigator.bluetooth.addEventListener('advertisementreceived', pasangListener);
+      } catch (e) { batalkanPasang(); setPasangInfo('⚠️ Gagal memindai — pastikan Bluetooth aktif'); }
+    })();
+  }
+  function batalkanPasang() {
+    pasangModeRef.current = false;
+    setPasangOtomatisA(false);
+    try { pasangScanRef.current?.stop(); } catch (e) {}
+    pasangScanRef.current = null;
+    try { navigator.bluetooth?.removeEventListener('advertisementreceived', pasangListener); } catch (e) {}
+  }
+
   async function pasangkan() {
     if (!pasangId) return;
+    if (pasangMac) { // MAC terdaftar → pindai otomatis (tanpa klik pilih)
+      if (pasangModeRef.current) { batalkanPasang(); setPasangInfo('⏹ Dihentikan'); return; }
+      pasangOtomatis();
+      return;
+    }
+    // fallback manual: pilih tag — MAC dalam nama tag ikut tersimpan (identitas global)
     setPasangInfo('Dekatkan HANYA gelang jamaah ini (±30 cm), lalu pilih tag-nya dari daftar…');
     const device = await pilihTag(true);
     if (!device) { setPasangInfo('❌ Tidak ada tag dipilih'); return; }
     const hasilBunyi = await bunyikan(device);
     const namaBersih = (pasangNama || 'jamaah').replace(/ \(⌚.*$/, '');
+    const mac = macAsli(device.name);   // nama siar = iTAG(MAC) → identitas global = MAC
+    const lain = mac && macPeta[mac] && macPeta[mac].id !== pasangId ? macPeta[mac] : null;
     const nmDev = device.name ? String(device.name).trim() : '';
-    const pakaiNama = nmDev && !namaDefaultTag(nmDev);   // nama unik = global; default ("iTag") = kode per-HP
+    // MAC ada → kunci lokal = ID perangkat (identitas global lewat MAC);
+    // tanpa MAC: nama unik (rename) = global; nama default ("iTag") = kode per-HP
+    const pakaiNama = !mac && nmDev && !namaDefaultTag(nmDev);
     const kunci = pakaiNama ? nmDev : device.id;
-    const tampilkan = pakaiNama ? `⌚ "${kunci}"` : `⌚ …${pendek(device.id)}`;
+    const tampilkan = mac ? `⌚ MAC ${mac}` : pakaiNama ? `⌚ "${kunci}"` : `⌚ …${pendek(device.id)}`;
     setPasangInfo(hasilBunyi.ok
       ? `🔊 Tag "${device.name || 'tag'}" ${tampilkan} BERBUNYI — ini tag yang benar.`
-      : `Tag terpilih: "${device.name || 'tag'}" ${tampilkan}. Perintah bunyi: ${hasilBunyi.info} — wajar, sebagian iTag bunyinya saat tersambung/terputus, bukan lewat web.`);
-    if (!confirm(`Simpankan tag ini untuk ${namaBersih}?`)) { try { device.gatt.disconnect(); } catch (e) {} setPasangInfo('Batal.'); return; }
+      : `Tag terpilih: "${device.name || 'tag'}" ${tampilkan}. Perintah bunyi: ${hasilBunyi.info} — wajar, sebagian iTag bunyinya saat tersambung/terputus, bukan lewat web.` + (lain ? ` ⚠️ TAG INI TERCATAT ATAS NAMA ${lain.nama.toUpperCase()}.` : ''));
+    if (!confirm(`Simpankan tag ini untuk ${namaBersih}${lain ? ` — PERHATI: tercatat atas nama ${lain.nama}!` : ''}?`)) { try { device.gatt.disconnect(); } catch (e) {} setPasangInfo('Batal.'); return; }
     try { device.gatt.disconnect(); } catch (e) {}
     const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
-      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci }) });
+      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci, mac_tag: mac || undefined }) });
     const d = await r.json();
-    const cakupan = pakaiNama ? ' — radar di HP mana pun mengenali lewat nama' : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri). ⚠️ Di HP/tablet LAIN tag ini tetap tampil "iTag" (nama pabrik tidak bisa permanen diganti) — kalau perangkat lain juga perlu membacanya, pasang tag ini juga di perangkat itu (tombol ⌚)';
+    const cakupan = mac ? ' — MAC tersimpan: radar di HP mana pun mengenali (gotong royong)'
+      : pakaiNama ? ' — radar di HP mana pun mengenali lewat nama'
+      : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri). ⚠️ Di HP/tablet LAIN tag ini tetap tampil "iTag" (nama pabrik tidak bisa permanen diganti) — kalau perangkat lain juga perlu membacanya, pasang tag ini juga di perangkat itu (tombol ⌚)';
     setPasangInfo(d.ok ? `✅ Tersimpan: ${namaBersih} ${tampilkan}${cakupan}` : '❌ Gagal: ' + (d.error || ''));
+    if (d.ok) muatMacDaftar();
   }
 
   /* ===== PASANG VIA SINYAL: tanpa dialog pemilih — tag sinyal-terkuat = tag di tangan ===== */
@@ -383,7 +473,8 @@ export default function RadarPage() {
     hentiPasangSinyal();
     const namaBersih = (pasangNama || 'jamaah').replace(/ \(⌚.*$/, '');
     const nmBersih = String(nmTag || '').trim();
-    const pakaiNama = nmBersih && !namaDefaultTag(nmBersih);   // nama unik tag = identitas global; nama default ("iTag") = kode per-HP
+    const macN0 = macAsli(nmBersih);   // nama siar = iTAG(MAC) → identitas global = MAC
+    const pakaiNama = !macN0 && nmBersih && !namaDefaultTag(nmBersih);   // nama unik (tanpa MAC) = global; default = kode per-HP
     const kunci = pakaiNama ? nmBersih : mac;
     const sudah = namaMapRef.current[kunci] || namaMapRef.current[mac];
     const pesan = (sudah && sudah.nama !== namaBersih)
@@ -391,12 +482,15 @@ export default function RadarPage() {
       : `Simpan tag ini untuk ${namaBersih}?`;
     if (!confirm(pesan)) return;
     const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
-      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci }) });
+      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci, mac_tag: macN0 || undefined }) });
     const d = await r.json();
     if (d.ok) {
       setNamaMap(m => ({ ...m, [kunci]: { nama: namaBersih, regu: '' } }));
-      const tampilkan = pakaiNama ? `⌚ "${kunci}"` : `⌚ …${pendek(mac)}`;
-      const cakupan = pakaiNama ? ' — radar di HP mana pun mengenali lewat nama' : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri). ⚠️ Di HP/tablet LAIN tag ini tetap tampil "iTag" — pasang ulang di perangkat yang akan dipakai membaca';
+      if (macN0) muatMacDaftar();
+      const tampilkan = macN0 ? `⌚ MAC ${macN0}` : pakaiNama ? `⌚ "${kunci}"` : `⌚ …${pendek(mac)}`;
+      const cakupan = macN0 ? ' — MAC tersimpan: radar di HP mana pun mengenali (gotong royong)'
+        : pakaiNama ? ' — radar di HP mana pun mengenali lewat nama'
+        : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri). ⚠️ Di HP/tablet LAIN tag ini tetap tampil "iTag" — pasang ulang di perangkat yang akan dipakai membaca';
       setPasangInfo(`✅ Tersimpan: ${namaBersih} ${tampilkan}${cakupan}. Ulangi untuk jamaah berikutnya (tombol ⌚ di dashboard).`);
       tambahLog(`⌚ <b>${namaBersih}</b> tersandingkan ke tag ${tampilkan}`);
     } else setPasangInfo('❌ Gagal: ' + (d.error || ''));
@@ -474,7 +568,7 @@ export default function RadarPage() {
               ? <img src={cari.foto} alt="" className="w-20 h-20 rounded-2xl object-cover mx-auto border-2 border-red-200" />
               : <div className="w-20 h-20 rounded-2xl bg-red-50 grid place-items-center text-3xl font-black text-red-500 mx-auto border-2 border-red-200">{(cari.nama || '?').replace(/^(H\.|Hj\.)\s*/, '').split(' ').slice(0, 2).map(x => x[0]).join('')}</div>}
             <h2 className="font-extrabold text-[17px] mt-2">{cari.nama}</h2>
-            <p className="text-slate-500 text-[12px]">{cari.regu} · ⌚ {cari.beacon_id?.slice(0, 17)}</p>
+            <p className="text-slate-500 text-[12px]">{cari.regu} · ⌚ {cari.mac_tag || cari.beacon_id?.slice(0, 17) || '—'}</p>
 
             {/* Bar sinyal */}
             <div className="mt-4">
@@ -511,12 +605,21 @@ export default function RadarPage() {
       {pasangId && (
         <div className="mt-3 kartu p-4 border-2 border-hijau">
           <b className="text-hijau">⌚ Pasangkan gelang: {pasangNama}</b>
-          <div className="flex gap-2 mt-2">
-            <button className={`btn flex-1 !text-[13px] ${pasangScan ? 'btn-merah' : 'btn-utama'}`} onClick={pasangViaSinyal}>
-              {pasangScan ? '⏹ Hentikan Sinyal' : '📶 Pasang via Sinyal (otomatis)'}
+          {pasangMac
+            ? <p className="text-[12px] text-slate-600 mt-1">MAC terdaftar: <b className="font-mono">{pasangMac}</b> — pindai otomatis, tanpa klik pilih. Dikenali semua HP (gotong royong).</p>
+            : <p className="text-[12px] text-slate-600 mt-1">⚠️ MAC belum diisi (Kelola Jamaah ✏️). Kalau nama tag-nya <b>iTAG(MAC)</b>, MAC ikut tersimpan otomatis saat pasang.</p>}
+          {pasangMac ? (
+            <button className={`btn w-full mt-2 !text-[13px] ${pasangOtomatisA ? 'btn-merah' : 'btn-utama'}`} onClick={pasangkan}>
+              {pasangOtomatisA ? '⏹ Batalkan' : '📡 Pindai Otomatis (MAC)'}
             </button>
-            <button className="btn btn-muda !text-[13px] !px-3" onClick={pasangkan}>📲 Manual</button>
-          </div>
+          ) : (
+            <div className="flex gap-2 mt-2">
+              <button className={`btn flex-1 !text-[13px] ${pasangScan ? 'btn-merah' : 'btn-utama'}`} onClick={pasangViaSinyal}>
+                {pasangScan ? '⏹ Hentikan Sinyal' : '📶 Pasang via Sinyal (otomatis)'}
+              </button>
+              <button className="btn btn-muda !text-[13px] !px-3" onClick={pasangkan}>📲 Manual</button>
+            </div>
+          )}
           {pasangScan && (
             <div className="mt-3 space-y-1.5">
               <p className="text-[11.5px] text-slate-500 font-bold">{deteksi} tag terdeteksi — kunci baris 🎯 teratas (sinyal terkuat = tag di tangan Anda):</p>
@@ -561,7 +664,7 @@ export default function RadarPage() {
           {sinkron && <p className="text-[12px] mt-2 font-bold text-slate-700">{sinkron}</p>}
           {pasangInfo && <p className="text-[12.5px] mt-2 font-bold">{pasangInfo}</p>}
           <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
-            💡 Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda. Tag masih bernama pabrik ("iTag")? Terpasang kode di HP ini — <b>HANYA perangkat ini</b> yang akan membacanya; di perangkat lain tetap "iTag". Tiap KaRu pasang tag rombongannya di HP-nya sendiri, radar HP itu yang membacanya. Tag punya nama unik? Terkenal di HP mana pun (sinkron 🔄 dulu bila perlu).
+            💡 Nama tag <b>iTAG(MAC)</b>? MAC-nya tersimpan otomatis — dikenali radar HP mana pun, tanpa pasang ulang (gotong royong). Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda. Tag masih bernama pabrik ("iTag")? Terpasang kode di HP ini — <b>HANYA perangkat ini</b> yang akan membacanya; di perangkat lain tetap "iTag". Tiap KaRu pasang tag rombongannya di HP-nya sendiri, radar HP itu yang membacanya. Tag punya nama unik? Terkenal di HP mana pun (sinkron 🔄 dulu bila perlu).
           </p>
         </div>
       )}

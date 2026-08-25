@@ -1,14 +1,16 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
+import { normMac } from '../../lib/mac.js';
 import { useApp } from '../App.jsx';
 
-const KOSONG = { id: null, nama: '', paspor: '', hp: '', umur: '', regu: '', hotel: '', punya_hp: true, punya_gelang: false, beacon_id: '', catatan: '', foto: '' };
+const KOSONG = { id: null, nama: '', paspor: '', hp: '', umur: '', regu: '', hotel: '', punya_hp: true, punya_gelang: false, beacon_id: '', mac_tag: '', catatan: '', foto: '' };
 
 export default function KelolaPage() {
   const { tampilToast } = useApp();
   const [rows, setRows] = useState([]);
   const [regu, setRegu] = useState([]);          // daftar regu (anti-typo)
   const [form, setForm] = useState(null);        // dialog tambah/ubah
+  const macRef = useRef(null);                   // input MAC uncontrolled: kebal re-render polling
   const [impor, setImpor] = useState(false);
   const [imporTeks, setImporTeks] = useState('');
   const [imporRegu, setImporRegu] = useState('');
@@ -23,9 +25,12 @@ export default function KelolaPage() {
 
   const simpan = async () => {
     if (!form.nama.trim()) { tampilToast('Nama wajib diisi', true); return; }
-    const r = form.id
-      ? await api('/api/jamaah', { method: 'PUT', body: JSON.stringify({ ...form, id: form.id }) })
-      : await api('/api/jamaah', { method: 'POST', body: JSON.stringify(form) });
+    const macNilai = normMac(macRef.current ? macRef.current.value : form.mac_tag);
+    const body = { ...form, mac_tag: macNilai };
+    if (body.mac_tag) body.punya_gelang = true; // ada MAC = pasti ada gelang
+    const r = body.id
+      ? await api('/api/jamaah', { method: 'PUT', body: JSON.stringify({ ...body, id: body.id }) })
+      : await api('/api/jamaah', { method: 'POST', body: JSON.stringify(body) });
     if (r.ok) { tampilToast(form.id ? '✅ Perubahan disimpan' : '✅ Jamaah ditambahkan'); setForm(null); muat(); }
     else tampilToast('Gagal: ' + (r.error || ''), true);
   };
@@ -91,7 +96,7 @@ export default function KelolaPage() {
                 <td className="p-2.5">{m.paspor || '—'}</td>
                 <td className="p-2.5">{m.umur || '—'}</td>
                 <td className="p-2.5">{m.punya_hp && m.punya_gelang ? '📱+⌚' : m.punya_hp ? '📱' : '⌚'}</td>
-                <td className="p-2.5 text-[11.5px]">{m.beacon_id || '—'}</td>
+                <td className="p-2.5 text-[11.5px]" title={m.mac_tag ? 'MAC terdaftar — radar HP mana pun bisa mengenali' : 'isi MAC di ✏️'}>{m.mac_tag || m.beacon_id || '—'}</td>
                 <td className="p-2.5 max-w-[160px]"><small>{m.catatan || '—'}</small></td>
                 <td className="p-2.5">
                   <div className="flex flex-wrap gap-1.5">
@@ -132,7 +137,9 @@ export default function KelolaPage() {
               <label className="flex items-center gap-2"><input type="checkbox" className="w-5 h-5 accent-[#0B5D3B]" checked={form.punya_hp} onChange={e => setForm({ ...form, punya_hp: e.target.checked })} /> 📱 Bawa smartphone</label>
               <label className="flex items-center gap-2"><input type="checkbox" className="w-5 h-5 accent-[#B48A2F]" checked={form.punya_gelang} onChange={e => setForm({ ...form, punya_gelang: e.target.checked })} /> ⌚ Gelang BLE</label>
             </div>
-            {form.punya_gelang && <><label className="text-[12px] font-bold text-slate-500 block mt-2">ID Gelang (beacon)</label>
+            {form.punya_gelang && <><label className="text-[12px] font-bold text-slate-500 block mt-2">📡 MAC Gelang <small className="text-slate-400 normal-case font-normal">(nama tag, mis. saat dipindai)</small></label>
+              <input ref={macRef} key={'mac-' + (form.id || 'baru')} className="input !font-mono" defaultValue={form.mac_tag || ''} placeholder="iTAG(FF:FF:12:A4:FF:63)" />
+              <label className="text-[12px] font-bold text-slate-500 block mt-2">ID Gelang (beacon)</label>
               <input className="input" value={form.beacon_id} onChange={e => setForm({ ...form, beacon_id: e.target.value })} placeholder="otomatis saat dipasangkan lewat Radar" /></>}
             <label className="text-[12px] font-bold text-slate-500 block mt-2">Catatan</label>
             <input className="input" value={form.catatan} onChange={e => setForm({ ...form, catatan: e.target.value })} />

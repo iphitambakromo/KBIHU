@@ -78,8 +78,20 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 2800);
   }, []);
 
+  const stateSig = useRef('');
   const muat = useCallback(async () => {
-    try { const d = await api('/api/state'); if (d.ok) setState(d); } catch (e) {}
+    try {
+      const d = await api('/api/state');
+      if (!d.ok) return;
+      // skip re-render bila data tak berubah (hindari gangguan saat mengetik form)
+      const sig = [d.sesi?.id || '',
+        (d.jamaah || []).map(m => (m.posisi?.waktu || '') + '|' + (m.sosAktif ? 1 : 0)).join(';'),
+        (d.kejadian || []).length + ':' + ((d.kejadian && d.kejadian[0]) ? d.kejadian[0].id : '')
+      ].join('#');
+      if (sig === stateSig.current) return;
+      stateSig.current = sig;
+      setState(d);
+    } catch (e) {}
   }, []);
 
   useEffect(() => {
@@ -96,7 +108,14 @@ export default function App() {
   useEffect(() => {
     if (!sesi) return;
     muat();
-    const t = setInterval(() => { if (!document.hidden) muat(); }, 5000);
+    // halaman form: jangan poll (re-render periodik bisa mengganggu input terkendali)
+    const RUTE_FORM = ['kelola', 'pengaturan', 'pengguna', 'diag', 'cetak'];
+    const t = setInterval(() => {
+      if (document.hidden) return;
+      const r = (location.hash || '#/').replace('#/', '').split('?')[0].split('/')[0];
+      if (RUTE_FORM.includes(r)) return;
+      muat();
+    }, 5000);
     return () => clearInterval(t);
   }, [sesi, muat]);
 

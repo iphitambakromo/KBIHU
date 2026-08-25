@@ -23,7 +23,7 @@ export const nowISO = () => new Date().toISOString();
 
 const SKEMA = [
   `CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, sandi_hash TEXT, salt TEXT, nama TEXT DEFAULT '', peran TEXT NOT NULL, regu TEXT DEFAULT '', wa TEXT DEFAULT '', foto TEXT DEFAULT '', aktif INTEGER DEFAULT 1)`,
-  `CREATE TABLE IF NOT EXISTS jamaah (id TEXT PRIMARY KEY, nama TEXT NOT NULL, paspor TEXT, hp TEXT, umur INTEGER, regu TEXT, hotel TEXT, foto TEXT, catatan TEXT, punya_hp INTEGER DEFAULT 1, punya_gelang INTEGER DEFAULT 0, beacon_id TEXT, latihan_token TEXT)`,
+  `CREATE TABLE IF NOT EXISTS jamaah (id TEXT PRIMARY KEY, nama TEXT NOT NULL, paspor TEXT, hp TEXT, umur INTEGER, regu TEXT, hotel TEXT, foto TEXT, catatan TEXT, punya_hp INTEGER DEFAULT 1, punya_gelang INTEGER DEFAULT 0, beacon_id TEXT, mac_tag TEXT, latihan_token TEXT)`,
   `CREATE TABLE IF NOT EXISTS sesi (id TEXT PRIMARY KEY, nama TEXT NOT NULL, tipe TEXT NOT NULL DEFAULT 'tracking', status TEXT DEFAULT 'aktif', regu TEXT DEFAULT '', waktu TEXT NOT NULL, oleh TEXT DEFAULT '')`,
   `CREATE TABLE IF NOT EXISTS titik (id TEXT PRIMARY KEY, sesi_id TEXT DEFAULT '', nama TEXT NOT NULL, tipe TEXT DEFAULT 'kumpul', lat REAL, lng REAL, radius INTEGER DEFAULT 100, warna TEXT DEFAULT '#0E7490', dibuat_oleh TEXT DEFAULT '', waktu TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS zona (id TEXT NOT NULL, sesi_id TEXT NOT NULL, nama TEXT NOT NULL, lat REAL, lng REAL, radius INTEGER DEFAULT 100, warna TEXT, jarak_asli_m INTEGER, PRIMARY KEY (sesi_id, id))`,
@@ -74,6 +74,7 @@ async function pastikanKolom(DB, tabel, kolom, def) {
 export async function skema(DB) {
   for (const q of SKEMA) await DB.prepare(q).run();
   await pastikanKolom(DB, 'users', 'foto', 'TEXT DEFAULT \'\'');
+  await pastikanKolom(DB, 'jamaah', 'mac_tag', "TEXT DEFAULT ''");
 }
 
 export async function seed(DB) {
