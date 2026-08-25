@@ -136,11 +136,18 @@ export default function KelolaPage() {
               <input className="input" value={form.beacon_id} onChange={e => setForm({ ...form, beacon_id: e.target.value })} placeholder="otomatis saat dipasangkan lewat Radar" /></>}
             <label className="text-[12px] font-bold text-slate-500 block mt-2">Catatan</label>
             <input className="input" value={form.catatan} onChange={e => setForm({ ...form, catatan: e.target.value })} />
-            <label className="text-[12px] font-bold text-slate-500 block mt-2">Foto (dikompres otomatis)</label>
-            <div className="flex gap-2 items-center">
-              {form.foto ? <img src={form.foto} alt="" className="w-14 h-14 rounded-xl object-cover border border-slate-200" /> : null}
-              <input type="file" accept="image/*" className="text-[13px]" onChange={e => pilihFoto(e.target.files?.[0])} />
-              {form.foto && <button className="btn btn-muda !min-h-[38px] !text-[11.5px]" onClick={() => setForm({ ...form, foto: '' })}>🗑️ foto</button>}
+            <label className="text-[12px] font-bold text-slate-500 block mt-2">Foto jamaah (otomatis dikecilkan & disimpan)</label>
+            <div className="flex gap-2 items-center flex-wrap">
+              {form.foto
+                ? <img src={form.foto} alt="" className="w-14 h-14 rounded-xl object-cover border border-slate-200" />
+                : <div className="w-14 h-14 rounded-xl bg-slate-100 border border-dashed border-slate-300 grid place-items-center text-[20px]" title="Belum ada foto">👤</div>}
+              <input id="foto-galeri" type="file" accept="image/*" className="hidden"
+                     onChange={e => { pilihFoto(e.target.files?.[0]); e.target.value = ''; }} />
+              <input id="foto-kamera" type="file" accept="image/*" capture="environment" className="hidden"
+                     onChange={e => { pilihFoto(e.target.files?.[0]); e.target.value = ''; }} />
+              <button className="btn btn-muda !min-h-[44px] !px-3 !text-[13px]" onClick={() => document.getElementById('foto-galeri').click()}>📷 Galeri</button>
+              <button className="btn btn-muda !min-h-[44px] !px-3 !text-[13px]" onClick={() => document.getElementById('foto-kamera').click()}>📸 Kamera</button>
+              {form.foto && <button className="btn btn-emas !min-h-[44px] !px-3 !text-[13px]" onClick={() => setForm({ ...form, foto: '' })}>🗑️ Hapus</button>}
             </div>
             <div className="flex gap-2 mt-4">
               <button className="btn btn-muda flex-1" onClick={() => setForm(null)}>Batal</button>

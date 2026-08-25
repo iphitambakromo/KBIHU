@@ -125,9 +125,10 @@ export default function LatihanPage({ token }) {
           for (const batas of [0.25, 0.5, 0.75, 1]) {
             if (pct >= batas && !L0.milestone[batas]) {
               L0.milestone[batas] = 1;
+              const mCapai = Math.round(nm);
               setPesan(batas === 1 ? '🎉 TARGET TERCAPAI! MasyaAllah, fisik Anda siap!' :
-                batas === 0.75 ? '💪 75% — sedikit lagi, istiqamah!' :
-                batas === 0.5 ? '🌳 Separuh jalan! Teruskan, semangat!' : '👍 25% — pemanasan bagus!');
+                batas === 0.75 ? `💪 ${Math.round(t.target_m * 0.75).toLocaleString('id-ID')} m dilewati — sedikit lagi, istiqamah!` :
+                batas === 0.5 ? `🌳 Separuh jalan — ${Math.round(t.target_m * 0.5).toLocaleString('id-ID')} m! Teruskan, semangat!` : `👍 ${mCapai.toLocaleString('id-ID')} m — pemanasan bagus!`);
             }
           }
           // checkpoint tiap 500 m — aman walau baterai mati / HP di saku lama
@@ -191,7 +192,7 @@ export default function LatihanPage({ token }) {
         <p className="text-white/85 text-[13px] mt-1">Salam kenal, <b>{d.jamaah.nama}</b> — Regu {d.jamaah.regu || '-'}<br />
           <small className="text-white/75">Rutin berlatih dari rumah agar kaki siap menempuh jarak ibadah yang sebenarnya</small></p>
         <div className="mt-2 bg-white/15 border border-white/25 rounded-full px-4 py-1.5 text-[13px] font-extrabold inline-block">
-          Total: {(pr.meter / 1000).toLocaleString('id-ID', { maximumFractionDigits: 1 })} km · {totalPct}% menuju siap
+          Total: {pr.meter.toLocaleString('id-ID')} m {d.totalTarget > pr.meter ? `· sisa ${(d.totalTarget - pr.meter).toLocaleString('id-ID')} m menuju siap` : '· 🎉 SEMUA TARGET SIAP!'}
         </div>
       </div>
 
@@ -199,13 +200,40 @@ export default function LatihanPage({ token }) {
       <div className="p-3 max-w-2xl mx-auto">
         <div className="relative rounded-2xl overflow-hidden border border-slate-200 shadow-sm">
           <div ref={petaEl} className="h-[52vh] min-h-[320px]" />
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent text-white p-4 pt-8 pointer-events-none">
+          <div className="absolute inset-x-0 bottom-0 z-[1000] bg-gradient-to-t from-black/85 to-transparent text-white p-4 pt-8 pointer-events-none">
             {aktif ? <>
               <p className="text-[13px] font-extrabold text-center">{aktif.judul}</p>
               <p className="text-[42px] font-black text-center leading-none my-1">
                 {Math.round(meter).toLocaleString('id-ID')} <small className="text-base opacity-80">/ {aktif.target.toLocaleString('id-ID')} m</small>
               </p>
-              <div className="h-3 bg-white/25 rounded-full overflow-hidden mx-2"><div className="h-full bg-emerald-300 transition-all" style={{ width: pct + '%' }} /></div>
+              {/* TALI UKUR: pita 0 → target; tick tiap 250 m, angka tiap 500 m, bendera = posisi sekarang */}
+              {(() => {
+                const T = aktif.target;
+                const tick = []; for (let t = 0; t <= T; t += 250) tick.push(t);
+                const lab = tick.filter(t => t % 500 === 0 || t === T);
+                const pos = Math.max(2, Math.min(98, Math.round(meter / T * 100)));
+                return (
+                  <div className="relative h-11 mt-1 mx-1">
+                    <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-4 bg-white/15 rounded border border-white/30 overflow-hidden">
+                      <div className="h-full bg-emerald-400/90 transition-all duration-500" style={{ width: Math.min(100, meter / T * 100) + '%' }} />
+                      {tick.map(tl => (
+                        <div key={tl} className={tl % 500 === 0 ? 'absolute top-0 h-2 w-px bg-white/80' : 'absolute top-0 h-1.5 w-px bg-white/45'}
+                             style={{ left: (tl / T * 100) + '%' }} />
+                      ))}
+                    </div>
+                    {lab.map(tl => (
+                      <span key={tl} className="absolute -translate-x-1/2 text-[8.5px] font-extrabold text-white/80 whitespace-nowrap"
+                            style={{ left: (tl / T * 100) + '%', top: 'calc(50% + 10px)' }}>
+                        {tl === 0 ? '0' : tl >= 1000 ? (tl / 1000) + ' km' : tl + ' m'}
+                      </span>
+                    ))}
+                    <div className="absolute top-0 -translate-x-1/2" style={{ left: pos + '%' }}>
+                      <div className="bg-amber-400 text-slate-900 text-[11px] font-extrabold px-1.5 py-0.5 rounded-md shadow whitespace-nowrap">{Math.round(meter).toLocaleString('id-ID')} m</div>
+                      <div className="w-0.5 h-1.5 bg-amber-400 mx-auto" />
+                    </div>
+                  </div>
+                );
+              })()}
             </> : <p className="text-center text-[13.5px] font-bold">Pilih jenis latihan di bawah 👇 lalu tekan <b>Mulai</b> — HP boleh di saku (biarkan layar menyala)</p>}
           </div>
         </div>
@@ -234,7 +262,7 @@ export default function LatihanPage({ token }) {
                       <b className="text-[14px]">{i + 1}. {t.nama} {prio && <span title="prioritas">⭐</span>}{ringan && !prio && <span title="mulai dari sini">🌱</span>}</b>
                       <small className="text-slate-500 block leading-snug">{t.keterangan}</small>
                       <div className="h-2 bg-slate-100 rounded-full overflow-hidden mt-1.5 max-w-[260px]"><div className="h-full bg-hijau" style={{ width: pp + '%' }} /></div>
-                      <small className="text-slate-500 font-bold">{p.meter.toLocaleString('id-ID')} m · {p.sesi} sesi ({pp}%)</small>
+                      <small className="text-slate-500 font-bold">{p.meter.toLocaleString('id-ID')} m · {p.sesi} sesi</small>
                     </div>
                     <span className="font-black text-hijau text-[13px] whitespace-nowrap">{t.target_m.toLocaleString('id-ID')} m</span>
                     <button className={`btn ${p.meter > 0 ? 'btn-muda' : 'btn-utama'} !min-h-[46px] !px-4 !text-[13px]`} disabled={!!aktif} onClick={() => mulai(i)}>{p.meter > 0 ? 'Lanjut' : 'Mulai'}</button>
