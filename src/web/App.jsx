@@ -51,6 +51,33 @@ function Login({ onOk }) {
   );
 }
 
+/* ---------- BARIS DAFTAR MAC (opsional per jamaah) ---------- */
+function BarisMac({ m }) {
+  const { muat, tampilToast } = useApp();
+  const [v, setV] = useState(m.mac_tag || '');
+  useEffect(() => { setV(m.mac_tag || ''); }, [m.mac_tag]);
+  const simpan = async () => {
+    let x = v.trim().toUpperCase().replace(/[^0-9A-F]/g, '');
+    if (x && x.length !== 12) { tampilToast('MAC: 12 digit hex (XX:XX:XX:XX:XX:XX)', true); return; }
+    if (x) x = x.match(/.{2}/g).join(':');
+    const r = await api('/api/jamaah', { method: 'PUT', body: JSON.stringify({ id: m.id, mac_tag: x }) });
+    if (r.ok) { tampilToast(`✅ ${m.nama} — MAC ${x || '(dihapus)'}`); muat(); }
+    else tampilToast('Gagal: ' + (r.error || ''), true);
+  };
+  return (
+    <div className="flex items-center gap-2 border border-slate-200 rounded-xl p-2">
+      <div className="flex-1 min-w-0">
+        <b className="text-[12.5px] block truncate">{m.nama}</b>
+        <small className="text-slate-400 text-[10.5px]">{m.regu || '—'}{m.punya_gelang ? ' · ⌚ terpasang' : ''}</small>
+      </div>
+      <input className="input !min-h-[38px] !px-2 !text-[11.5px] font-mono uppercase w-[150px] shrink-0"
+             placeholder="FF:FF:…:44" value={v} onChange={e => setV(e.target.value.toUpperCase())}
+             onKeyDown={e => e.key === 'Enter' && simpan()} />
+      <button className="btn btn-utama !min-h-[38px] !px-2.5 !text-[11.5px] shrink-0" title="Simpan MAC tag" onClick={simpan}>💾</button>
+    </div>
+  );
+}
+
 /* ---------- APLIKASI ---------- */
 export default function App() {
   const [sesi, setSesi] = useState(null);              // info user login
@@ -280,6 +307,7 @@ export default function App() {
                         : <div className="w-11 h-11 rounded-xl bg-emerald-50 text-hijau grid place-items-center font-extrabold">{(m.nama || '?').replace(/^(H\.|Hj\.)\s*/, '').split(' ').slice(0, 2).map(x => x[0]).join('')}</div>}
                       <div className="flex-1 min-w-0">
                         <b className="text-[13.5px] block truncate">{m.nama}</b>
+                        {m.mac_tag && <small className="text-slate-400 text-[10px] font-mono block">📟 {m.mac_tag}</small>}
                         {(() => {
                           const menit = m.posisi ? Math.max(0, Math.round((Date.now() - new Date(m.posisi.waktu)) / 60000)) : null;
                           const lamaTakTerlihat = m.punya_gelang && menit != null && menit > 30;
@@ -305,6 +333,19 @@ export default function App() {
                   ))}
                 </div>
               </div>
+              {bolehKelola && (
+                <div className="kartu p-4">
+                  <h2 className="text-[12px] font-extrabold uppercase tracking-wide text-hijau">📟 Daftar MAC Tag</h2>
+                  <p className="text-[11px] text-slate-500 mt-1 leading-snug">
+                    Baca MAC tiap tag di app scanner (mis. <b>nRF Connect</b> — gratis), lalu 💾 simpan di sini.
+                    MAC = nomor unik &amp; tetap tiap tag. Pakai untuk: pasang <b>anti salah orang</b> (cek MAC sebelum 🔒 di radar),
+                    dan <b>mencari jamaah spesifik</b> (buka app scanner di HP mana pun, cari MAC-nya → tag-nya ketemu).
+                  </p>
+                  <div className="mt-2 space-y-1.5">
+                    {(state?.jamaah || []).map(m => <BarisMac key={m.id} m={m} />)}
+                  </div>
+                </div>
+              )}
               <div className="kartu p-4">
                 <h2 className="text-[12px] font-extrabold uppercase tracking-wide text-hijau">🔔 Kejadian terbaru</h2>
                 <div className="mt-2 text-[12.5px] leading-relaxed">

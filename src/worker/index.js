@@ -345,15 +345,22 @@ async function tangani(request, env) {
     if (USER.peran === 'ketua-regu' && String(ada.regu || '').trim() !== String(USER.regu || '').trim())
       return j({ ok: false, error: 'di luar regu Anda' }, 403);
     const val = (k, def = '') => b[k] === undefined ? (ada[k] ?? def) : b[k];
-    await DB.prepare('UPDATE jamaah SET nama=?, paspor=?, hp=?, umur=?, regu=?, hotel=?, punya_hp=?, punya_gelang=?, beacon_id=?, catatan=?, foto=? WHERE id=?')
+    // MAC fisik tag: normalisasi (huruf besar, titik dua) — identitas tetap tiap tag utk anti salah pasang & pencarian
+    let macV = String(val('mac_tag') || '').trim().toUpperCase().replace(/\s+/g, '');
+    if (macV) {
+      const hex = macV.replace(/[^0-9A-F]/g, '');
+      if (hex.length !== 12) return j({ ok: false, error: 'format MAC salah — pakai XX:XX:XX:XX:XX:XX' }, 400);
+      macV = hex.match(/.{2}/g).join(':');
+    }
+    await DB.prepare('UPDATE jamaah SET nama=?, paspor=?, hp=?, umur=?, regu=?, hotel=?, punya_hp=?, punya_gelang=?, beacon_id=?, catatan=?, foto=?, mac_tag=? WHERE id=?')
       .bind(String(val('nama') || 'Tanpa Nama').trim(), val('paspor'), val('hp'),
             b.umur === undefined ? (ada.umur ?? null) : (Number(b.umur) || null),
             val('regu'), val('hotel'),
             b.punya_hp === undefined ? (ada.punya_hp ?? 1) : (b.punya_hp ? 1 : 0),
             b.punya_gelang === undefined ? (ada.punya_gelang ?? 0) : (b.punya_gelang ? 1 : 0),
             val('beacon_id'), val('catatan'),
-            b.foto === undefined ? (ada.foto || '') : b.foto, ada.id).run();
-    return j({ ok: true, beacon_id: val('beacon_id') });
+            b.foto === undefined ? (ada.foto || '') : b.foto, macV, ada.id).run();
+    return j({ ok: true, beacon_id: val('beacon_id'), mac_tag: macV });
   }
 
   /* ---------- PUBLIK: radar BLE — lapor gelang terlihat ---------- */
@@ -677,7 +684,7 @@ async function tangani(request, env) {
     const m = b.jamaahId ? await DB.prepare('SELECT * FROM jamaah WHERE id=?').bind(String(b.jamaahId)).first() : null;
     if (!m) return j({ ok: false, error: 'jamaah tidak ditemukan' }, 404);
     return j({ ok: true, jamaah: { id: m.id, nama: m.nama, regu: m.regu, foto: m.foto,
-      beacon_id: m.beacon_id, punya_gelang: !!m.punya_gelang } });
+      beacon_id: m.beacon_id, punya_gelang: !!m.punya_gelang, mac_tag: m.mac_tag || '' } });
   }
   if (path === '/api/pub/cari-selesai' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
