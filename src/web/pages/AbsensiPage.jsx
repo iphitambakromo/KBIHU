@@ -66,8 +66,18 @@ export default function AbsensiPage() {
 
   return (
     <div className="p-3 md:p-5 max-w-3xl mx-auto space-y-4 pb-10">
-      <h1 className="text-2xl font-extrabold text-hijau">✅ Absensi Titik</h1>
+      <h1 className="text-2xl font-extrabold text-hijau">✅ Absensi</h1>
       <p className="text-slate-500 text-[13.5px] -mt-2">Mulai acara di sebuah titik → jamaah yang check-in <b>di dalam radius titik</b> otomatis HADIR.</p>
+
+      {/* aksi cepat */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {bolehKelola && (
+          <button className="btn btn-utama !min-h-[56px] text-[14.5px]" title="Buka peta untuk membuat titik kumpul"
+                  onClick={() => { location.hash = '#/?buattitik=1'; }}>📍 Buat Titik Kumpul</button>
+        )}
+        <button className={`btn btn-emas !min-h-[56px] text-[14.5px] ${bolehKelola ? '' : 'sm:col-span-2'}`} title="Buka Radar — scan gelang → cek kehadiran"
+                onClick={() => { location.hash = '#/radar'; }}>📡 Cek Kehadiran (Radar)</button>
+      </div>
 
       {/* acara aktif / mulai */}
       {aktif ? (

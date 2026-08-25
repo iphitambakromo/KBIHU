@@ -61,7 +61,6 @@ export default function RadarPage() {
   const [scanAktif, setScanAktif] = useState(false);
   const [pasangInfo, setPasangInfo] = useState('');
   const [pasangNama, setPasangNama] = useState('…');
-  const [macDraft, setMacDraft] = useState(''); // MAC fisik tag (opsional) utk jamaah target
   const [acara, setAcara] = useState(null);
   // mode cari
   const [cari, setCari] = useState(null);          // {id, nama, foto, regu, beacon_id}
@@ -163,24 +162,10 @@ export default function RadarPage() {
       const m = (st.jamaah || []).find(x => x.id === pasangId);
       if (m) {
         setPasangNama(m.nama + (m.beacon_id ? ' (⌚ ' + m.beacon_id + ')' : ''));
-        setMacDraft(m.mac_tag || '');
       }
     })();
   }, [pasangId]);
 
-  /* Simpan MAC fisik tag utk jamaah target (opsional; dibaca dari app scanner, mis. nRF Connect) */
-  const simpanMac = async () => {
-    if (!pasangId) return;
-    let x = macDraft.trim().toUpperCase().replace(/[^0-9A-F]/g, '');
-    if (x && x.length !== 12) { setPasangInfo('❌ Format MAC: 12 digit hex, mis. FF:FF:12:A4:9C:44'); return; }
-    if (x) x = x.match(/.{2}/g).join(':');
-    const namaBersih = (pasangNama || 'jamaah').replace(/ \(⌚.*$/, '');
-    const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
-      body: JSON.stringify({ id: pasangId, mac_tag: x }) });
-    const d = await r.json();
-    if (d.ok) { setMacDraft(d.mac_tag || ''); setPasangInfo(`✅ MAC ${d.mac_tag ? d.mac_tag + ' ' : '(dihapus) '}tersimpan utk ${namaBersih}.`); }
-    else setPasangInfo('❌ Gagal: ' + (d.error || ''));
-  };
 
   /* ===== MODE CARI ===== */
   useEffect(() => { cariRef.current = cari; }, [cari]);
@@ -361,7 +346,7 @@ export default function RadarPage() {
     const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
       body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci }) });
     const d = await r.json();
-    const cakupan = pakaiNama ? ' — radar di HP mana pun mengenali lewat nama' : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri). ⚠️ Di HP/tablet LAIN tag ini tetap tampil "iTag" (nama pabrik tidak bisa permanen diganti; browser tidak bisa baca MAC) — kalau perangkat lain juga perlu membacanya, pasang tag ini juga di perangkat itu (tombol ⌚). Identifikasi manual lintas HP: salin MAC-nya di kolom bawah → "Daftar MAC" dashboard → cocokkan di app scanner (nRF Connect)';
+    const cakupan = pakaiNama ? ' — radar di HP mana pun mengenali lewat nama' : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri). ⚠️ Di HP/tablet LAIN tag ini tetap tampil "iTag" (nama pabrik tidak bisa permanen diganti) — kalau perangkat lain juga perlu membacanya, pasang tag ini juga di perangkat itu (tombol ⌚)';
     setPasangInfo(d.ok ? `✅ Tersimpan: ${namaBersih} ${tampilkan}${cakupan}` : '❌ Gagal: ' + (d.error || ''));
   }
 
@@ -411,7 +396,7 @@ export default function RadarPage() {
     if (d.ok) {
       setNamaMap(m => ({ ...m, [kunci]: { nama: namaBersih, regu: '' } }));
       const tampilkan = pakaiNama ? `⌚ "${kunci}"` : `⌚ …${pendek(mac)}`;
-      const cakupan = pakaiNama ? ' — radar di HP mana pun mengenali lewat nama' : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri). ⚠️ Di HP/tablet LAIN tag ini tetap tampil "iTag" — pasang ulang di perangkat yang akan dipakai membaca, atau identifikasi manual via MAC ("Daftar MAC" dashboard + app scanner nRF Connect)';
+      const cakupan = pakaiNama ? ' — radar di HP mana pun mengenali lewat nama' : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri). ⚠️ Di HP/tablet LAIN tag ini tetap tampil "iTag" — pasang ulang di perangkat yang akan dipakai membaca';
       setPasangInfo(`✅ Tersimpan: ${namaBersih} ${tampilkan}${cakupan}. Ulangi untuk jamaah berikutnya (tombol ⌚ di dashboard).`);
       tambahLog(`⌚ <b>${namaBersih}</b> tersandingkan ke tag ${tampilkan}`);
     } else setPasangInfo('❌ Gagal: ' + (d.error || ''));
@@ -489,7 +474,7 @@ export default function RadarPage() {
               ? <img src={cari.foto} alt="" className="w-20 h-20 rounded-2xl object-cover mx-auto border-2 border-red-200" />
               : <div className="w-20 h-20 rounded-2xl bg-red-50 grid place-items-center text-3xl font-black text-red-500 mx-auto border-2 border-red-200">{(cari.nama || '?').replace(/^(H\.|Hj\.)\s*/, '').split(' ').slice(0, 2).map(x => x[0]).join('')}</div>}
             <h2 className="font-extrabold text-[17px] mt-2">{cari.nama}</h2>
-            <p className="text-slate-500 text-[12px]">{cari.regu} · ⌚ {cari.beacon_id?.slice(0, 17)}{cari.mac_tag ? ` · 📟 ${cari.mac_tag}` : ''}</p>
+            <p className="text-slate-500 text-[12px]">{cari.regu} · ⌚ {cari.beacon_id?.slice(0, 17)}</p>
 
             {/* Bar sinyal */}
             <div className="mt-4">
@@ -575,20 +560,8 @@ export default function RadarPage() {
           )}
           {sinkron && <p className="text-[12px] mt-2 font-bold text-slate-700">{sinkron}</p>}
           {pasangInfo && <p className="text-[12.5px] mt-2 font-bold">{pasangInfo}</p>}
-          <div className="mt-3 border border-slate-200 bg-slate-50 rounded-xl p-2.5">
-            <b className="text-[11.5px] text-slate-600">📟 MAC tag — opsional (baca di app scanner, mis. <span className="whitespace-nowrap">nRF Connect</span>)</b>
-            <div className="flex gap-2 mt-1.5">
-              <input className="input flex-1 !min-h-[40px] !text-[13px] font-mono uppercase" placeholder="FF:FF:12:A4:9C:44"
-                     value={macDraft} onChange={e => setMacDraft(e.target.value.toUpperCase())}
-                     onKeyDown={e => e.key === 'Enter' && simpanMac()} />
-              <button className="btn btn-utama !min-h-[40px] !px-3 !text-[12px]" onClick={simpanMac}>💾</button>
-            </div>
-            <small className="text-slate-400 text-[10.5px] leading-snug block mt-1">
-              MAC = nomor unik & tetap tiap tag (tidak bisa di-rename). Gunanya: pasang <b>anti salah orang</b> (cek MAC di app scanner sebelum 🔒) & <b>cari jamaah spesifik</b> (lihat "Daftar MAC" di dashboard, cari MAC itu di app scanner HP mana pun).
-            </small>
-          </div>
           <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
-            💡 Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda. Tag masih bernama pabrik ("iTag")? Terpasang kode di HP ini — <b>HANYA perangkat ini</b> yang akan membacanya; di perangkat lain tetap "iTag" (browser tidak bisa baca MAC tag). Tiap KaRu pasang tag rombongannya di HP-nya sendiri, radar HP itu yang membacanya. Tag punya nama unik? Terkenal di HP mana pun (sinkron 🔄 dulu bila perlu). Butuh bedah tag di HP lain? Catat MAC (kolom di atas) → "Daftar MAC" di dashboard → cocokkan di app scanner (nRF Connect).
+            💡 Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda. Tag masih bernama pabrik ("iTag")? Terpasang kode di HP ini — <b>HANYA perangkat ini</b> yang akan membacanya; di perangkat lain tetap "iTag". Tiap KaRu pasang tag rombongannya di HP-nya sendiri, radar HP itu yang membacanya. Tag punya nama unik? Terkenal di HP mana pun (sinkron 🔄 dulu bila perlu).
           </p>
         </div>
       )}

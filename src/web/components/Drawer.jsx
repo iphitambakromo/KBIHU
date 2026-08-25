@@ -3,8 +3,9 @@ export default function Drawer({ open, onClose, onKeluar, sesi, rute }) {
   const grup = [
     { t: 'Utama', items: [
       { l: '🗺️ Dashboard', href: '#/' },
-      { l: '✅ Absensi Titik', href: '#/absensi' },
+      { l: '✅ Absensi', href: '#/absensi' },
       { l: '📡 Radar Gelang', href: '#/radar' },
+      { l: '👥 Jamaah (WA)', href: '#/jamaah' },
       { l: '📊 Progres Latihan', href: '#/progres' },
       { l: '🪪 Cetak Kartu', href: '#/cetak', khusus: sesi.peran === 'admin' || sesi.peran === 'ketrom' },
     ]},

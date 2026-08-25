@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import { useApp } from '../App.jsx';
 import { bacaGPS } from '../lib/gps.js';
 import { api } from '../lib/api.js';
+import { waLink, tampilkanHp } from '../lib/wa.js';
 const jarakKe = (aLat, aLng, bLat, bLng) => {
   const R = 6371000, r = Math.PI / 180;
   const dLat = (bLat - aLat) * r, dLng = (bLng - aLng) * r;
@@ -151,7 +152,22 @@ export default function MapView() {
       const m2 = L.marker([m.posisi.lat, m.posisi.lng], {
         icon: L.divIcon({ className: '', iconSize: [isSOS ? 30 : ukuran, isSOS ? 30 : ukuran], iconAnchor: [isSOS ? 15 : ukuran/2, isSOS ? 15 : ukuran/2], html })
       }).addTo(peta);
-      m2.bindPopup(`<b>${m.nama}</b><br><small>${m.punya_gelang && !m.punya_hp ? '⌚ gelang' : '📱 HP'} · ${new Date(m.posisi.waktu).toLocaleTimeString('id-ID')} · ${m.titik ? 'di ' + m.titik : 'di luar titik'}</small>${isSOS ? '<br><b style="color:#B4232A">🆘 SOS AKTIF</b>' : ''}`);
+      /* kartu jamaah: nama, regu, terakhir terlihat, SOS, no. HP + tombol WA, tautan kartu */
+      const sumberIcon = m.punya_gelang && !m.punya_hp ? '⌚' : '📱';
+      const wa = waLink(m.hp);
+      const jamTampil = new Date(m.posisi.waktu).toLocaleTimeString('id-ID');
+      const hpBaris = m.hp ? `<div style="font-size:11.5px;color:#475569;margin-top:3px">📞 ${escHtml(tampilkanHp(m.hp))}</div>` : '';
+      const waTombol = wa
+        ? `<a href="${wa}" target="_blank" rel="noopener" style="display:inline-block;margin-top:7px;background:#25D366;color:#fff;font-weight:700;font-size:12.5px;padding:8px 13px;border-radius:9px;text-decoration:none">💬 WhatsApp</a>`
+        : '';
+      m2.bindPopup(`<div style="min-width:185px;font-family:inherit">
+        <b style="font-size:14px">${escHtml(m.nama)}</b>
+        <div style="font-size:11.5px;color:#475569;margin-top:1px">${escHtml(m.regu || '—')}</div>
+        <div style="font-size:11.5px;color:#475569;margin-top:3px">${sumberIcon} terakhir ${jamTampil} · ${m.titik ? 'di ' + escHtml(m.titik) : 'di luar titik'}</div>
+        ${isSOS ? '<div style="color:#B4232A;font-weight:800;font-size:12px;margin-top:3px">🆘 SOS AKTIF</div>' : ''}
+        ${hpBaris}${waTombol}
+        <a href="#/kartu/${escHtml(m.id)}" style="display:inline-block;margin-top:7px;font-size:11.5px;color:#0B5D3B;font-weight:700;text-decoration:none">🪪 Kartu jamaah →</a>
+      </div>`);
       jamaahRef.current[m.id] = { m: m2 };
     });
   }, [state]);
@@ -208,6 +224,13 @@ export default function MapView() {
       tampilToast(`📍 "${d.titik.nama}" dibuat di posisi Anda (radius 100 m)`);
     } else tampilToast('Gagal: ' + (d.error || ''), true);
   };
+
+  /* Dari tombol "Buat Titik Kumpul" di halaman Absensi: #/?buattitik=1 → langsung buat titik */
+  useEffect(() => {
+    if (!location.hash.includes('buattitik')) return;
+    history.replaceState(null, '', '#/');
+    setTimeout(() => buatKumpul(), 400);
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const ubahNamaTitik = async (t) => {
     const nama = prompt(`Ganti nama titik "${t.nama}":`, t.nama);

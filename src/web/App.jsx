@@ -11,6 +11,8 @@ import KelolaPage from './pages/KelolaPage.jsx';
 import PenggunaPage from './pages/PenggunaPage.jsx';
 import DiagPage from './pages/DiagPage.jsx';
 import PengaturanPage from './pages/PengaturanPage.jsx';
+import RadarPage from './pages/RadarPage.jsx';
+import JamaahPage from './pages/JamaahPage.jsx';
 
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
@@ -51,32 +53,6 @@ function Login({ onOk }) {
   );
 }
 
-/* ---------- BARIS DAFTAR MAC (opsional per jamaah) ---------- */
-function BarisMac({ m }) {
-  const { muat, tampilToast } = useApp();
-  const [v, setV] = useState(m.mac_tag || '');
-  useEffect(() => { setV(m.mac_tag || ''); }, [m.mac_tag]);
-  const simpan = async () => {
-    let x = v.trim().toUpperCase().replace(/[^0-9A-F]/g, '');
-    if (x && x.length !== 12) { tampilToast('MAC: 12 digit hex (XX:XX:XX:XX:XX:XX)', true); return; }
-    if (x) x = x.match(/.{2}/g).join(':');
-    const r = await api('/api/jamaah', { method: 'PUT', body: JSON.stringify({ id: m.id, mac_tag: x }) });
-    if (r.ok) { tampilToast(`✅ ${m.nama} — MAC ${x || '(dihapus)'}`); muat(); }
-    else tampilToast('Gagal: ' + (r.error || ''), true);
-  };
-  return (
-    <div className="flex items-center gap-2 border border-slate-200 rounded-xl p-2">
-      <div className="flex-1 min-w-0">
-        <b className="text-[12.5px] block truncate">{m.nama}</b>
-        <small className="text-slate-400 text-[10.5px]">{m.regu || '—'}{m.punya_gelang ? ' · ⌚ terpasang' : ''}</small>
-      </div>
-      <input className="input !min-h-[38px] !px-2 !text-[11.5px] font-mono uppercase w-[150px] shrink-0"
-             placeholder="FF:FF:…:44" value={v} onChange={e => setV(e.target.value.toUpperCase())}
-             onKeyDown={e => e.key === 'Enter' && simpan()} />
-      <button className="btn btn-utama !min-h-[38px] !px-2.5 !text-[11.5px] shrink-0" title="Simpan MAC tag" onClick={simpan}>💾</button>
-    </div>
-  );
-}
 
 /* ---------- APLIKASI ---------- */
 export default function App() {
@@ -92,6 +68,7 @@ export default function App() {
     window.addEventListener('hashchange', fn);
     return () => window.removeEventListener('hashchange', fn);
   }, []);
+  const ruteBersih = (rute || "").split("?")[0];  // abaikan param (?cari=, ?pasang=) utk matching menu
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
 
@@ -231,17 +208,19 @@ export default function App() {
           {/* HEADER */}
           <header className="bg-gradient-to-r from-hijau to-hijau2 text-white flex items-center gap-3 px-3 py-2.5 shadow-lg z-[1200]">
             <button className="w-12 h-12 rounded-xl bg-white/15 border border-white/25 text-xl" onClick={() => setDrawer(true)} aria-label="Menu">☰</button>
-            <div className="min-w-0 flex-1">
+            <a href="#/" className="min-w-0 flex-1 -m-1 p-1" title="Kembali ke Dashboard">
               <h1 className="font-extrabold leading-tight text-[17px]">🕌 IPHI</h1>
               <p className="text-white/80 text-[10px] leading-snug">Tracking Amanah Mengawal Barisan · Awasi Kendali Rombongan · Optimalisasi Manajemen Operasional</p>
-            </div>
+            </a>
             <span className="hidden sm:inline-block bg-white/15 border border-white/25 rounded-full px-3 py-1.5 text-[12px] font-bold">
               {sesi.peran === 'admin' ? '🛂 Admin' : sesi.peran === 'ketrom' ? '🧭 KaRom' : '🚩 KaRu'}
             </span>
           </header>
 
-          {rute === 'absensi' ? <div className="flex-1 overflow-y-auto"><AbsensiPage /></div> : rute === 'progres' ? <div className="flex-1 overflow-y-auto"><ProgresPage /></div>
-            : rute === 'kelola' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><KelolaPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
+          {ruteBersih === 'absensi' ? <div className="flex-1 overflow-y-auto"><AbsensiPage /></div> : ruteBersih === 'radar' ? <div className="flex-1 overflow-y-auto"><RadarPage /></div>
+            : ruteBersih === 'jamaah' ? <div className="flex-1 overflow-y-auto"><JamaahPage /></div>
+            : ruteBersih === 'progres' ? <div className="flex-1 overflow-y-auto"><ProgresPage /></div>
+            : ruteBersih === 'kelola' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><KelolaPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
             : rute === 'pengguna' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><PenggunaPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
             : rute === 'diag' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><DiagPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
             : rute === 'pengaturan' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><PengaturanPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
@@ -307,7 +286,6 @@ export default function App() {
                         : <div className="w-11 h-11 rounded-xl bg-emerald-50 text-hijau grid place-items-center font-extrabold">{(m.nama || '?').replace(/^(H\.|Hj\.)\s*/, '').split(' ').slice(0, 2).map(x => x[0]).join('')}</div>}
                       <div className="flex-1 min-w-0">
                         <b className="text-[13.5px] block truncate">{m.nama}</b>
-                        {m.mac_tag && <small className="text-slate-400 text-[10px] font-mono block">📟 {m.mac_tag}</small>}
                         {(() => {
                           const menit = m.posisi ? Math.max(0, Math.round((Date.now() - new Date(m.posisi.waktu)) / 60000)) : null;
                           const lamaTakTerlihat = m.punya_gelang && menit != null && menit > 30;
@@ -333,21 +311,6 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              {bolehKelola && (
-                <div className="kartu p-4">
-                  <h2 className="text-[12px] font-extrabold uppercase tracking-wide text-hijau">📟 Daftar MAC Tag</h2>
-                  <p className="text-[11px] text-slate-500 mt-1 leading-snug">
-                    Baca MAC tiap tag di app scanner (mis. <b>nRF Connect</b> — gratis), lalu 💾 simpan di sini.
-                    MAC = nomor unik &amp; tetap tiap tag. Pakai untuk: pasang <b>anti salah orang</b> (cek MAC sebelum 🔒 di radar),
-                    dan <b>mencari jamaah spesifik</b> (buka app scanner di HP mana pun, cari MAC-nya → tag-nya ketemu).
-                    <br/>⚠️ <b>Browser tidak bisa match otomatis via MAC</b> — supaya otomatis (nama jamaah tampil di radar),
-                    tag harus <b>DIPASANG (⌚) di perangkat yang akan membacanya</b>. MAC = identifikasi manual lintas HP.
-                  </p>
-                  <div className="mt-2 space-y-1.5">
-                    {(state?.jamaah || []).map(m => <BarisMac key={m.id} m={m} />)}
-                  </div>
-                </div>
-              )}
               <div className="kartu p-4">
                 <h2 className="text-[12px] font-extrabold uppercase tracking-wide text-hijau">🔔 Kejadian terbaru</h2>
                 <div className="mt-2 text-[12.5px] leading-relaxed">
@@ -365,7 +328,7 @@ export default function App() {
 
           </>
           )}
-          <Drawer open={drawer} onClose={() => setDrawer(false)} onKeluar={keluar} sesi={sesi} rute={rute} />
+          <Drawer open={drawer} onClose={() => setDrawer(false)} onKeluar={keluar} sesi={sesi} rute={ruteBersih} />
           <Toast toast={toast} />
         </div>
       )}

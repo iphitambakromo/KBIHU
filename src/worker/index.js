@@ -345,26 +345,19 @@ async function tangani(request, env) {
     if (USER.peran === 'ketua-regu' && String(ada.regu || '').trim() !== String(USER.regu || '').trim())
       return j({ ok: false, error: 'di luar regu Anda' }, 403);
     const val = (k, def = '') => b[k] === undefined ? (ada[k] ?? def) : b[k];
-    // MAC fisik tag: normalisasi (huruf besar, titik dua) — identitas tetap tiap tag utk anti salah pasang & pencarian
-    let macV = String(val('mac_tag') || '').trim().toUpperCase().replace(/\s+/g, '');
-    if (macV) {
-      const hex = macV.replace(/[^0-9A-F]/g, '');
-      if (hex.length !== 12) return j({ ok: false, error: 'format MAC salah — pakai XX:XX:XX:XX:XX:XX' }, 400);
-      macV = hex.match(/.{2}/g).join(':');
-    }
-    await DB.prepare('UPDATE jamaah SET nama=?, paspor=?, hp=?, umur=?, regu=?, hotel=?, punya_hp=?, punya_gelang=?, beacon_id=?, catatan=?, foto=?, mac_tag=? WHERE id=?')
+    await DB.prepare('UPDATE jamaah SET nama=?, paspor=?, hp=?, umur=?, regu=?, hotel=?, punya_hp=?, punya_gelang=?, beacon_id=?, catatan=?, foto=? WHERE id=?')
       .bind(String(val('nama') || 'Tanpa Nama').trim(), val('paspor'), val('hp'),
             b.umur === undefined ? (ada.umur ?? null) : (Number(b.umur) || null),
             val('regu'), val('hotel'),
             b.punya_hp === undefined ? (ada.punya_hp ?? 1) : (b.punya_hp ? 1 : 0),
             b.punya_gelang === undefined ? (ada.punya_gelang ?? 0) : (b.punya_gelang ? 1 : 0),
             val('beacon_id'), val('catatan'),
-            b.foto === undefined ? (ada.foto || '') : b.foto, macV, ada.id).run();
-    return j({ ok: true, beacon_id: val('beacon_id'), mac_tag: macV });
+            b.foto === undefined ? (ada.foto || '') : b.foto, ada.id).run();
+    return j({ ok: true, beacon_id: val('beacon_id') });
   }
 
   /* ---------- PUBLIK: radar BLE — lapor gelang terlihat ---------- */
-  /* peta MAC -> nama jamaah (radar publik: membedakan iTag yang namanya seragam) */
+  /* peta device-id -> nama jamaah (radar publik: membedakan iTag yang namanya seragam) */
   if (path === '/api/pub/gelang' && method === 'GET') {
     const rows = (await DB.prepare("SELECT beacon_id, nama, regu FROM jamaah WHERE COALESCE(punya_gelang,0)=1 AND COALESCE(beacon_id,'') != ''").all()).results || [];
     return j({ ok: true, gelang: rows.map(r => ({ mac: r.beacon_id, nama: r.nama, regu: r.regu || '' })) });
@@ -400,46 +393,6 @@ async function tangani(request, env) {
     return j({ ok: true, jamaah: m.nama, titik: r.titik, absensi });
   }
 
-  /* ---------- PUBLIK: radar MAC (app Android native) — MAC = identitas tetap tag, jalan di HP mana pun ---------- */
-  if (path === '/api/pub/mac' && method === 'POST') {
-    const b = await request.json().catch(() => ({}));
-    const hex = String(b.mac || '').trim().toUpperCase().replace(/[^0-9A-F]/g, '');
-    if (hex.length !== 12) return j({ ok: false, error: 'mac wajib (contoh FF:FF:12:A4:9C:44)' }, 400);
-    const macV = hex.match(/.{2}/g).join(':');
-    const m = await DB.prepare('SELECT * FROM jamaah WHERE mac_tag=?').bind(macV).first();
-    if (!m) return j({ ok: false, error: 'MAC belum terdaftar di Daftar MAC — catat dulu di dashboard' }, 404);
-    if (!Number.isFinite(b.lat) || !Number.isFinite(b.lng)) return j({ ok: false, error: 'aktifkan GPS radar' }, 400);
-    const r = await catatPosisi(DB, m.id, b.lat, b.lng, 'ble');
-    const sig = Number.isFinite(b.rssi) ? ' (sinyal ' + Math.round(b.rssi) + ' dBm)' : '';
-    await DB.prepare('INSERT INTO kejadian (sesi_id, jamaah_id, tipe, zona_titik, keterangan, waktu) VALUES (?,?,?,?,?,?)')
-      .bind('trk1', m.id, 'ble', r.titik, `Gelang (MAC) terlihat radar HP${sig}${b.oleh ? ' (' + String(b.oleh).slice(0, 40) + ')' : ''}`, nowISO()).run();
-    let absensi = null;
-    const ev = await DB.prepare('SELECT * FROM absensi_event WHERE ditutup=0 ORDER BY waktu DESC LIMIT 1').first();
-    if (ev) {
-      const tt = await DB.prepare('SELECT * FROM titik WHERE id=?').bind(ev.titik_id || '').first();
-      const d = tt ? jarakM(b.lat, b.lng, tt.lat, tt.lng) : Infinity;
-      if (tt && d <= tt.radius) {
-        await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, lat, lng, waktu, oleh) VALUES (?,?,?,?,?,?,?,?)')
-          .bind(ev.id, m.id, 'hadir', 'gelang', b.lat, b.lng, nowISO(), String(b.oleh || 'radar').slice(0, 40)).run();
-        absensi = { hadir: true, acara: ev.nama, titik: tt.nama };
-      } else if (tt) {
-        absensi = { hadir: false, acara: ev.nama, titik: tt.nama, sisaMeter: Math.round(d - tt.radius) };
-      }
-    }
-    return j({ ok: true, jamaah: m.nama, titik: r.titik, absensi });
-  }
-
-  /* ---------- SEMENTARA: log CI build APK (dihapus setelah app stabil) ---------- */
-  if (path === '/api/pub/log' && method === 'POST') {
-    const b = await request.json().catch(() => ({}));
-    await DB.prepare('INSERT INTO galat (waktu, path, metode, pesan, level) VALUES (?,?,?,?,?)')
-      .bind(nowISO(), String(b.path || '').slice(0, 100), 'ci', String(b.pesan || '').slice(0, 12000), 'error').run();
-    return j({ ok: true });
-  }
-  if (path === '/api/pub/galat' && method === 'GET') {
-    const rows = (await DB.prepare('SELECT waktu, path, pesan FROM galat ORDER BY id DESC LIMIT 5').all()).results || [];
-    return j({ ok: true, rows });
-  }
 
   /* ---------- LATIHAN MANDIRI ---------- */
   const jamaahByToken = async (tok) => {
@@ -724,7 +677,7 @@ async function tangani(request, env) {
     const m = b.jamaahId ? await DB.prepare('SELECT * FROM jamaah WHERE id=?').bind(String(b.jamaahId)).first() : null;
     if (!m) return j({ ok: false, error: 'jamaah tidak ditemukan' }, 404);
     return j({ ok: true, jamaah: { id: m.id, nama: m.nama, regu: m.regu, foto: m.foto,
-      beacon_id: m.beacon_id, punya_gelang: !!m.punya_gelang, mac_tag: m.mac_tag || '' } });
+      beacon_id: m.beacon_id, punya_gelang: !!m.punya_gelang } });
   }
   if (path === '/api/pub/cari-selesai' && method === 'POST') {
     const b = await request.json().catch(() => ({}));

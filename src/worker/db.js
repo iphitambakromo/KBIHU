@@ -73,7 +73,6 @@ async function pastikanKolom(DB, tabel, kolom, def) {
 }
 export async function skema(DB) {
   for (const q of SKEMA) await DB.prepare(q).run();
-  await pastikanKolom(DB, 'jamaah', 'mac_tag', "TEXT DEFAULT ''"); // MAC fisik tag = identitas tetap per tag (dibaca via app scanner, mis. nRF Connect)
   await pastikanKolom(DB, 'users', 'foto', 'TEXT DEFAULT \'\'');
 }
 
