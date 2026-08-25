@@ -20,6 +20,10 @@ const deteksiBrowser = (() => {
 
 const bytesToHex = (u8) => Array.from(u8 || []).map(b => b.toString(16).padStart(2, '0')).join('');
 
+/* Nama pabrik/default iTag BUKAN identitas unik — kalau tag masih memakai nama ini,
+   pasang pakai kode per-HP (device.id), bukan nama. */
+const namaDefaultTag = (nm) => /^(itag|itag\s+baru)$/i.test(String(nm || '').trim());
+
 /* Baca nama ASLI tag dari GATT (servis 0x1800, char 0x2A00) — untuk sinkron nama
    di HP yang scan-nya masih menampilkan "iTag" padahal tag sudah di-rename di HP lain. */
 async function bacaNamaGATT(dev) {
@@ -326,8 +330,10 @@ export default function RadarPage() {
     if (!device) { setPasangInfo('❌ Tidak ada tag dipilih'); return; }
     const hasilBunyi = await bunyikan(device);
     const namaBersih = (pasangNama || 'jamaah').replace(/ \(⌚.*$/, '');
-    const kunci = (device.name && String(device.name).trim()) ? String(device.name).trim() : device.id;   // nama siaran tag = identitas global lintas HP
-    const tampilkan = (device.name && String(device.name).trim()) ? `⌚ "${kunci}"` : `⌚ …${pendek(device.id)}`;
+    const nmDev = device.name ? String(device.name).trim() : '';
+    const pakaiNama = nmDev && !namaDefaultTag(nmDev);   // nama unik = global; default ("iTag") = kode per-HP
+    const kunci = pakaiNama ? nmDev : device.id;
+    const tampilkan = pakaiNama ? `⌚ "${kunci}"` : `⌚ …${pendek(device.id)}`;
     setPasangInfo(hasilBunyi.ok
       ? `🔊 Tag "${device.name || 'tag'}" ${tampilkan} BERBUNYI — ini tag yang benar.`
       : `Tag terpilih: "${device.name || 'tag'}" ${tampilkan}. Perintah bunyi: ${hasilBunyi.info} — wajar, sebagian iTag bunyinya saat tersambung/terputus, bukan lewat web.`);
@@ -336,7 +342,8 @@ export default function RadarPage() {
     const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
       body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci }) });
     const d = await r.json();
-    setPasangInfo(d.ok ? `✅ Tersimpan: ${namaBersih} ${tampilkan} — radar di HP mana pun mengenali lewat nama` : '❌ Gagal: ' + (d.error || ''));
+    const cakupan = pakaiNama ? ' — radar di HP mana pun mengenali lewat nama' : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri)';
+    setPasangInfo(d.ok ? `✅ Tersimpan: ${namaBersih} ${tampilkan}${cakupan}` : '❌ Gagal: ' + (d.error || ''));
   }
 
   /* ===== PASANG VIA SINYAL: tanpa dialog pemilih — tag sinyal-terkuat = tag di tangan ===== */
@@ -371,7 +378,9 @@ export default function RadarPage() {
     if (!pasangId) return;
     hentiPasangSinyal();
     const namaBersih = (pasangNama || 'jamaah').replace(/ \(⌚.*$/, '');
-    const kunci = (nmTag && String(nmTag).trim()) ? String(nmTag).trim() : mac;   // nama siaran tag = identitas global lintas HP
+    const nmBersih = String(nmTag || '').trim();
+    const pakaiNama = nmBersih && !namaDefaultTag(nmBersih);   // nama unik tag = identitas global; nama default ("iTag") = kode per-HP
+    const kunci = pakaiNama ? nmBersih : mac;
     const sudah = namaMapRef.current[kunci] || namaMapRef.current[mac];
     const pesan = (sudah && sudah.nama !== namaBersih)
       ? `⚠️ Tag ini sudah terpasang ke ${sudah.nama}. Pindahkan ke ${namaBersih}?`
@@ -382,8 +391,9 @@ export default function RadarPage() {
     const d = await r.json();
     if (d.ok) {
       setNamaMap(m => ({ ...m, [kunci]: { nama: namaBersih, regu: '' } }));
-      const tampilkan = (nmTag && String(nmTag).trim()) ? `⌚ "${kunci}"` : `⌚ …${pendek(mac)}`;
-      setPasangInfo(`✅ Tersimpan: ${namaBersih} ${tampilkan} — radar di HP mana pun mengenali lewat nama. Ulangi untuk jamaah berikutnya (tombol ⌚ di dashboard).`);
+      const tampilkan = pakaiNama ? `⌚ "${kunci}"` : `⌚ …${pendek(mac)}`;
+      const cakupan = pakaiNama ? ' — radar di HP mana pun mengenali lewat nama' : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri)';
+      setPasangInfo(`✅ Tersimpan: ${namaBersih} ${tampilkan}${cakupan}. Ulangi untuk jamaah berikutnya (tombol ⌚ di dashboard).`);
       tambahLog(`⌚ <b>${namaBersih}</b> tersandingkan ke tag ${tampilkan}`);
     } else setPasangInfo('❌ Gagal: ' + (d.error || ''));
   }
@@ -547,7 +557,7 @@ export default function RadarPage() {
           {sinkron && <p className="text-[12px] mt-2 font-bold text-slate-700">{sinkron}</p>}
           {pasangInfo && <p className="text-[12.5px] mt-2 font-bold">{pasangInfo}</p>}
           <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
-            💡 Tag sudah di-rename jadi nama jamaah (app iTag + cabut baterai)? Radar di HP mana pun langsung mengenali lewat nama. Di HP yang scan-nya masih "iTag" → tekan 🔄 dulu (sekali per HP), baru 🔒. Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda.
+            💡 Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda. Tag masih bernama pabrik ("iTag")? Terpasang kode di HP ini — tiap KaRu pasang tag rombongan sendiri di HP-nya, radar HP itu yang membacanya. Tag punya nama unik? Terkenal di HP mana pun (sinkron 🔄 dulu bila perlu).
           </p>
         </div>
       )}

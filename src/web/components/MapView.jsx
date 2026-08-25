@@ -255,7 +255,7 @@ export default function MapView() {
   };
 
   return (
-    <div className={`order-1 md:order-2 relative flex-1 h-full min-h-[58vh] md:min-h-0 ${modeTitik ? 'mode-titik' : ''}`}>
+    <div className={`order-1 md:order-2 relative h-[50vh] shrink-0 md:h-full md:flex-1 md:min-h-0 ${modeTitik ? 'mode-titik' : ''}`}>
       <div ref={elRef} id="peta-utama" className="absolute inset-0 z-0" />
       {modeTitik && <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[600] bg-slate-900/85 text-white font-bold text-[12.5px] px-4 py-2 rounded-full shadow-lg pointer-events-none">🗺️ Ketuk lokasi di peta… (Esc = batal)</div>}
       <div className="absolute top-3 right-3 z-[500] flex gap-2">

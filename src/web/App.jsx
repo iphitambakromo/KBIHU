@@ -136,10 +136,10 @@ export default function App() {
             : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin / KaRom</div>
           ) : (
           <>
-          {/* RESPONSIF: peta penuh + panel bawah (HP) / grid 2 kolom (tableti & PC) */}
-          <div className="flex-1 min-h-0 md:grid md:grid-rows-[minmax(0,1fr)] md:grid-cols-[380px_1fr] lg:grid-cols-[420px_1fr]">
+          {/* RESPONSIF: HP = peta setengah layar di atas + panel bawah; tablet/PC = grid 2 kolom */}
+          <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-rows-[minmax(0,1fr)] md:grid-cols-[380px_1fr] lg:grid-cols-[420px_1fr]">
             <MapView />
-            <section className="order-2 md:order-1 p-3 space-y-3 overflow-y-auto max-h-[38vh] md:max-h-none md:border-r md:border-slate-200">
+            <section className="order-2 md:order-1 p-3 space-y-3 overflow-y-auto flex-1 min-h-0 md:max-h-none md:border-r md:border-slate-200">
               <div className="kartu p-4">
                 <h2 className="text-[12px] font-extrabold uppercase tracking-wide text-hijau">Sesi Aktif</h2>
                 <p className="font-extrabold text-[15px]">{state?.sesi?.nama || '—'}</p>
@@ -204,7 +204,7 @@ export default function App() {
                         {m.punya_gelang && m.punya_gelang && (
                           <a className="btn btn-merah !min-h-[38px] !px-3 !text-[11.5px] animate-pulse" href={'#/radar?cari=' + encodeURIComponent(m.id)} title="Cari jamaah ini">🔍</a>
                         )}
-                        {(sesi && (sesi.peran === 'admin' || sesi.peran === 'ketrom')) && <a className="btn btn-emas !min-h-[38px] !px-3 !text-[11.5px]" href={'#/radar?pasang=' + encodeURIComponent(m.id)} title="Pasangkan gelang BLE">⌚</a>}
+                        {sesi && ['admin', 'ketrom', 'ketua-regu'].includes(sesi.peran) && <a className="btn btn-emas !min-h-[38px] !px-3 !text-[11.5px]" href={'#/radar?pasang=' + encodeURIComponent(m.id)} title="Pasangkan gelang BLE (di HP ini, utk regu sendiri)">⌚</a>}
                         <a className="btn btn-muda !min-h-[38px] !px-3 !text-[11.5px]" href={'#/kartu/' + encodeURIComponent(m.id)}>🪪</a>
                       </div>
                     </div>
