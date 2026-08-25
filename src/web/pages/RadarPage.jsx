@@ -74,9 +74,9 @@ export default function RadarPage() {
         if (ev.manufacturerData) { const p = []; ev.manufacturerData.forEach((v, k) => p.push(('MFR' + Number(k).toString(16).padStart(2, '0') + ':' + bytesToHex(v)).toUpperCase())); mfr = p.join(' '); }
       } catch (e) {}
       const st = pasangRssiRef.current;
-      if (!st[id] || rssi > st[id].rssi) st[id] = { rssi, t: kini, svc, mfr };
+      if (!st[id] || rssi > st[id].rssi) st[id] = { rssi, t: kini, svc, mfr, nm: ev.device.name || '' };
       for (const k of Object.keys(st)) if (kini - st[k].t > 4000) delete st[k];
-      const list = Object.entries(st).map(([mac, v]) => ({ mac, rssi: v.rssi, pct: rssiKePct(v.rssi), svc: v.svc || '', mfr: v.mfr || '' }));
+      const list = Object.entries(st).map(([mac, v]) => ({ mac, rssi: v.rssi, pct: rssiKePct(v.rssi), svc: v.svc || '', mfr: v.mfr || '', nm: v.nm || '' }));
       list.sort((a, b) => b.rssi - a.rssi);
       setPasangList(list.slice(0, 12));
       setDeteksi(Object.keys(st).length);
@@ -162,8 +162,7 @@ export default function RadarPage() {
       cariScanRef.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
       navigator.bluetooth.addEventListener('advertisementreceived', ev => {
         if (!cariRef.current) return;
-        const id = ev.device.id || ev.device.name;
-        if (id !== beaconId) return;
+        if (ev.device.id !== beaconId && ev.device.name !== beaconId) return;
         const rssi = ev.rssi || -100;
         const pct = rssiKePct(rssi);
         const info = rssiKeLabel(rssi);
@@ -231,11 +230,11 @@ export default function RadarPage() {
     const kini = Date.now();
     if (terlapor.current[id] && kini - terlapor.current[id] < 120000) return;
     terlapor.current[id] = kini;
-    const nm = namaMapRef.current[id];
+    const nm = namaMapRef.current[id] || (device.name ? namaMapRef.current[device.name] : undefined);
     tambahLog(`⏳ Melaporkan <b>${nm ? nm.nama : (device.name || 'tag')}</b>${nm ? ` <small class="text-slate-400">iTag …${pendek(id)}</small>` : ''}…`);
     try {
       const r = await fetch('/api/pub/ble', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ beaconId: id, lat: gps ? gps.lat : undefined, lng: gps ? gps.lng : undefined, oleh: 'gotong-royong', rssi }) });
+        body: JSON.stringify({ beaconId: id, nama: device.name || '', lat: gps ? gps.lat : undefined, lng: gps ? gps.lng : undefined, oleh: 'gotong-royong', rssi }) });
       const d = await r.json();
       if (d.ok) tambahLog(`✅ <b>${d.jamaah}</b> tercatat${d.titik ? ' — di ' + d.titik : ''}${labelJarak(rssi) ? ' · ' + labelJarak(rssi) : ''}` +
           (d.absensi?.hadir ? ` · <b>HADIR</b>` : ''));
@@ -295,15 +294,17 @@ export default function RadarPage() {
     if (!device) { setPasangInfo('❌ Tidak ada tag dipilih'); return; }
     const hasilBunyi = await bunyikan(device);
     const namaBersih = (pasangNama || 'jamaah').replace(/ \(⌚.*$/, '');
+    const kunci = (device.name && String(device.name).trim()) ? String(device.name).trim() : device.id;   // nama siaran tag = identitas global lintas HP
+    const tampilkan = (device.name && String(device.name).trim()) ? `⌚ "${kunci}"` : `⌚ …${pendek(device.id)}`;
     setPasangInfo(hasilBunyi.ok
-      ? `🔊 Tag "${device.name || 'tag'}" (⌚ …${pendek(device.id)}) BERBUNYI — ini tag yang benar.`
-      : `Tag terpilih: "${device.name || 'tag'}" (⌚ …${pendek(device.id)}). Perintah bunyi: ${hasilBunyi.info} — wajar, sebagian iTag bunyinya saat tersambung/terputus, bukan lewat web.`);
+      ? `🔊 Tag "${device.name || 'tag'}" ${tampilkan} BERBUNYI — ini tag yang benar.`
+      : `Tag terpilih: "${device.name || 'tag'}" ${tampilkan}. Perintah bunyi: ${hasilBunyi.info} — wajar, sebagian iTag bunyinya saat tersambung/terputus, bukan lewat web.`);
     if (!confirm(`Simpankan tag ini untuk ${namaBersih}?`)) { try { device.gatt.disconnect(); } catch (e) {} setPasangInfo('Batal.'); return; }
     try { device.gatt.disconnect(); } catch (e) {}
     const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
-      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: device.id }) });
+      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci }) });
     const d = await r.json();
-    setPasangInfo(d.ok ? `✅ Tersimpan: ${namaBersih} ⌚ …${pendek(device.id)} — tag bisa berbunyi saat koneksi putus (normal)` : '❌ Gagal: ' + (d.error || ''));
+    setPasangInfo(d.ok ? `✅ Tersimpan: ${namaBersih} ${tampilkan} — radar di HP mana pun mengenali lewat nama` : '❌ Gagal: ' + (d.error || ''));
   }
 
   /* ===== PASANG VIA SINYAL: tanpa dialog pemilih — tag sinyal-terkuat = tag di tangan ===== */
@@ -334,22 +335,24 @@ export default function RadarPage() {
     try { navigator.bluetooth?.removeEventListener('advertisementreceived', pasangHandlerRef.current); } catch (e) {}
     setPasangScan(false); setPasangList([]); setDeteksi(0); pasangRssiRef.current = {};
   };
-  async function kunciTag(mac) {
+  async function kunciTag(mac, nmTag) {
     if (!pasangId) return;
     hentiPasangSinyal();
     const namaBersih = (pasangNama || 'jamaah').replace(/ \(⌚.*$/, '');
-    const sudah = namaMapRef.current[mac];
+    const kunci = (nmTag && String(nmTag).trim()) ? String(nmTag).trim() : mac;   // nama siaran tag = identitas global lintas HP
+    const sudah = namaMapRef.current[kunci] || namaMapRef.current[mac];
     const pesan = (sudah && sudah.nama !== namaBersih)
       ? `⚠️ Tag ini sudah terpasang ke ${sudah.nama}. Pindahkan ke ${namaBersih}?`
       : `Simpan tag ini untuk ${namaBersih}?`;
     if (!confirm(pesan)) return;
     const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
-      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: mac }) });
+      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci }) });
     const d = await r.json();
     if (d.ok) {
-      setNamaMap(m => ({ ...m, [mac]: { nama: namaBersih, regu: '' } }));
-      setPasangInfo(`✅ Tersimpan: ${namaBersih} ⌚ …${pendek(mac)} — ulangi untuk jamaah berikutnya (tombol ⌚ di dashboard).`);
-      tambahLog(`⌚ <b>${namaBersih}</b> tersandingkan ke tag …${pendek(mac)}`);
+      setNamaMap(m => ({ ...m, [kunci]: { nama: namaBersih, regu: '' } }));
+      const tampilkan = (nmTag && String(nmTag).trim()) ? `⌚ "${kunci}"` : `⌚ …${pendek(mac)}`;
+      setPasangInfo(`✅ Tersimpan: ${namaBersih} ${tampilkan} — radar di HP mana pun mengenali lewat nama. Ulangi untuk jamaah berikutnya (tombol ⌚ di dashboard).`);
+      tambahLog(`⌚ <b>${namaBersih}</b> tersandingkan ke tag ${tampilkan}`);
     } else setPasangInfo('❌ Gagal: ' + (d.error || ''));
   }
 
@@ -424,19 +427,20 @@ export default function RadarPage() {
           {pasangScan && (
             <div className="mt-3 space-y-1.5">
               <p className="text-[11.5px] text-slate-500 font-bold">{deteksi} tag terdeteksi — kunci baris 🎯 teratas (sinyal terkuat = tag di tangan Anda):</p>
+              {(() => { const atas = pasangList[0]; const bersih = (pasangNama || '').replace(/ \(⌚.*$/, ''); if (atas && atas.nm && bersih && atas.nm !== bersih) return <p className="text-[11.5px] text-amber-700 font-bold">⚠️ Nama tag terkuat "{atas.nm}" berbeda dari "{bersih}" — pastikan tag-nya yang benar.</p>; return null; })()}
               {pasangList.length === 0 && <p className="text-slate-400 text-[12.5px]">📶 Mencari tag… (tag harus menyala & dekat, ±1 m)</p>}
               {pasangList.map((t, i) => {
-                const nm = namaMap[t.mac];
+                const nm = namaMap[t.mac] || (t.nm ? namaMap[t.nm] : undefined);
                 return (
                   <div key={t.mac} className={`flex items-center gap-2 border rounded-xl p-2 ${i === 0 ? 'border-hijau bg-emerald-50' : 'border-slate-200'}`}>
                     <div className="flex-1 min-w-0">
-                      <b className="text-[13px] block truncate">{i === 0 ? '🎯 ' : ''}{nm ? nm.nama : 'Tag baru'}</b>
+                      <b className="text-[13px] block truncate">{i === 0 ? '🎯 ' : ''}{nm ? nm.nama : (t.nm ? '🏷️ ' + t.nm : 'Tag baru')}</b>
                       <small className="text-slate-500 text-[11px]">iTag …{pendek(t.mac)} · {t.rssi} dBm{nm && nm.regu ? ' · ' + nm.regu : ''}</small>
                     </div>
                     <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
                       <div className={`h-full ${t.pct > 60 ? 'bg-emerald-500' : t.pct > 30 ? 'bg-amber-400' : 'bg-blue-400'}`} style={{ width: t.pct + '%' }} />
                     </div>
-                    <button className="btn btn-utama !min-h-[36px] !px-2.5 !text-[12px]" onClick={() => kunciTag(t.mac)}>🔒</button>
+                    <button className="btn btn-utama !min-h-[36px] !px-2.5 !text-[12px]" onClick={() => kunciTag(t.mac, t.nm)}>🔒</button>
                   </div>
                 );
               })}
@@ -454,7 +458,7 @@ export default function RadarPage() {
           )}
           {pasangInfo && <p className="text-[12.5px] mt-2 font-bold">{pasangInfo}</p>}
           <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
-            Semua iTag bernama sama? Tidak masalah — sistem memakai MAC-nya. Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda.
+            💡 Tag sudah di-rename jadi nama jamaah (app iTag + cabut baterai)? Radar di HP mana pun langsung mengenali lewat nama. Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda.
           </p>
         </div>
       )}

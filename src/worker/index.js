@@ -365,7 +365,10 @@ async function tangani(request, env) {
   if (path === '/api/pub/ble' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     if (!b.beaconId) return j({ ok: false, error: 'beaconId wajib' }, 400);
-    const m = await DB.prepare('SELECT * FROM jamaah WHERE beacon_id=?').bind(String(b.beaconId)).first();
+    let m = await DB.prepare('SELECT * FROM jamaah WHERE beacon_id=?').bind(String(b.beaconId)).first();
+    // fallback: cocokkan via NAMA siaran tag (rename iTag) — jalan lintas HP/browser
+    if (!m && b.nama && String(b.nama).trim() && String(b.nama).trim() !== String(b.beaconId).trim())
+      m = await DB.prepare('SELECT * FROM jamaah WHERE beacon_id=?').bind(String(b.nama).trim()).first();
     if (!m) return j({ ok: false, error: 'tag tidak terdaftar' }, 404);
     // koordinat radar (pelapor); fallback: titik terdekat tidak diketahui -> pakai posisi terakhir? tolak bila tak ada GPS
     if (!Number.isFinite(b.lat) || !Number.isFinite(b.lng)) return j({ ok: false, error: 'aktifkan GPS radar' }, 400);
