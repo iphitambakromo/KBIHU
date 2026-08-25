@@ -361,7 +361,7 @@ export default function RadarPage() {
     const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
       body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci }) });
     const d = await r.json();
-    const cakupan = pakaiNama ? ' — radar di HP mana pun mengenali lewat nama' : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri)';
+    const cakupan = pakaiNama ? ' — radar di HP mana pun mengenali lewat nama' : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri). ⚠️ Di HP/tablet LAIN tag ini tetap tampil "iTag" (nama pabrik tidak bisa permanen diganti; browser tidak bisa baca MAC) — kalau perangkat lain juga perlu membacanya, pasang tag ini juga di perangkat itu (tombol ⌚). Identifikasi manual lintas HP: salin MAC-nya di kolom bawah → "Daftar MAC" dashboard → cocokkan di app scanner (nRF Connect)';
     setPasangInfo(d.ok ? `✅ Tersimpan: ${namaBersih} ${tampilkan}${cakupan}` : '❌ Gagal: ' + (d.error || ''));
   }
 
@@ -411,7 +411,7 @@ export default function RadarPage() {
     if (d.ok) {
       setNamaMap(m => ({ ...m, [kunci]: { nama: namaBersih, regu: '' } }));
       const tampilkan = pakaiNama ? `⌚ "${kunci}"` : `⌚ …${pendek(mac)}`;
-      const cakupan = pakaiNama ? ' — radar di HP mana pun mengenali lewat nama' : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri)';
+      const cakupan = pakaiNama ? ' — radar di HP mana pun mengenali lewat nama' : ' — tag dikenali di HP ini (tiap HP pasang tag rombongan sendiri). ⚠️ Di HP/tablet LAIN tag ini tetap tampil "iTag" — pasang ulang di perangkat yang akan dipakai membaca, atau identifikasi manual via MAC ("Daftar MAC" dashboard + app scanner nRF Connect)';
       setPasangInfo(`✅ Tersimpan: ${namaBersih} ${tampilkan}${cakupan}. Ulangi untuk jamaah berikutnya (tombol ⌚ di dashboard).`);
       tambahLog(`⌚ <b>${namaBersih}</b> tersandingkan ke tag ${tampilkan}`);
     } else setPasangInfo('❌ Gagal: ' + (d.error || ''));
@@ -588,7 +588,7 @@ export default function RadarPage() {
             </small>
           </div>
           <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
-            💡 Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda. Tag masih bernama pabrik ("iTag")? Terpasang kode di HP ini — tiap KaRu pasang tag rombongan sendiri di HP-nya, radar HP itu yang membacanya. Tag punya nama unik? Terkenal di HP mana pun (sinkron 🔄 dulu bila perlu).
+            💡 Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda. Tag masih bernama pabrik ("iTag")? Terpasang kode di HP ini — <b>HANYA perangkat ini</b> yang akan membacanya; di perangkat lain tetap "iTag" (browser tidak bisa baca MAC tag). Tiap KaRu pasang tag rombongannya di HP-nya sendiri, radar HP itu yang membacanya. Tag punya nama unik? Terkenal di HP mana pun (sinkron 🔄 dulu bila perlu). Butuh bedah tag di HP lain? Catat MAC (kolom di atas) → "Daftar MAC" di dashboard → cocokkan di app scanner (nRF Connect).
           </p>
         </div>
       )}

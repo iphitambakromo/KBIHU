@@ -340,6 +340,8 @@ export default function App() {
                     Baca MAC tiap tag di app scanner (mis. <b>nRF Connect</b> — gratis), lalu 💾 simpan di sini.
                     MAC = nomor unik &amp; tetap tiap tag. Pakai untuk: pasang <b>anti salah orang</b> (cek MAC sebelum 🔒 di radar),
                     dan <b>mencari jamaah spesifik</b> (buka app scanner di HP mana pun, cari MAC-nya → tag-nya ketemu).
+                    <br/>⚠️ <b>Browser tidak bisa match otomatis via MAC</b> — supaya otomatis (nama jamaah tampil di radar),
+                    tag harus <b>DIPASANG (⌚) di perangkat yang akan membacanya</b>. MAC = identifikasi manual lintas HP.
                   </p>
                   <div className="mt-2 space-y-1.5">
                     {(state?.jamaah || []).map(m => <BarisMac key={m.id} m={m} />)}
