@@ -57,6 +57,9 @@ export default function App() {
   const [state, setState] = useState(null);            // data dashboard
   const [drawer, setDrawer] = useState(false);
   const [rute, setRute] = useState((location.hash || '#/').replace('#/', ''));
+  const [beepStatus, setBeepStatus] = useState('');   // status bunyi iTag (dashboard)
+  const [beepBusy, setBeepBusy] = useState(false);
+  const beepGuardRef = useRef(false);
   useEffect(() => {
     const fn = () => { setRute((location.hash || '#/').replace('#/', '')); setDrawer(false); };
     window.addEventListener('hashchange', fn);
@@ -109,6 +112,90 @@ export default function App() {
   };
 
   const bolehKelola = sesi && ['admin', 'ketrom', 'ketua-regu'].includes(sesi.peran);
+
+  /* ===== BUNYI ITAG (dashboard): bunyi per jamaah / bunyi semua — tag bunyi saat HP konek ===== */
+  const namaDefaultTag = (nm) => /^(itag|itag\s+baru)$/i.test(String(nm || '').trim());
+  const cocokTag = (m, ev) => {
+    if (!m.beacon_id) return false;
+    const id = ev.device.id || '', nm = ev.device.name || '';
+    if (id && id === m.beacon_id) return true;                       // kode per-HP (pasang di HP ini)
+    if (nm && !namaDefaultTag(m.beacon_id) && nm === m.beacon_id) return true; // nama unik (global)
+    return false;
+  };
+  const bunyikanDevice = async (device) => {
+    try {
+      const server = await device.gatt.connect();
+      const putuskan = () => setTimeout(() => { try { server.disconnect(); } catch (e) {} }, 4000);
+      try { const sv = await server.getPrimaryService(0x1802); const ch = await sv.getCharacteristic(0x2A06);
+        await ch.writeValue(new Uint8Array([2]));
+        setTimeout(() => { ch.writeValue(new Uint8Array([0])).catch(() => {}); }, 1000);
+        putuskan(); return 'servis baterai';
+      } catch (e) {}
+      try { const sv2 = await server.getPrimaryService(0xFFE0); const ch2 = await sv2.getCharacteristic(0xFFE1);
+        await ch2.writeValue(new Uint8Array([1])); putuskan(); return 'servis iTag'; } catch (e) {}
+      try { const sv3 = await server.getPrimaryService(0xFFF0); const cs = await sv3.getCharacteristics();
+        const w = cs.find(c => c.properties.write || c.properties.writeWithoutResponse);
+        if (w) { await w.writeValue(new Uint8Array([1])); putuskan(); return 'servis 0xFFF0'; } } catch (e) {}
+      putuskan(); return 'konek';   // sebagian iTag bunyinya saat tersambung/terputus
+    } catch (e) { return 'gagal'; }
+  };
+  const bunyiJamaah = async (m) => {
+    if (beepGuardRef.current) return;
+    if (!navigator.bluetooth?.requestDevice) { tampilToast('Browser tidak mendukung Bluetooth', true); return; }
+    beepGuardRef.current = true; setBeepBusy(true);
+    setBeepStatus(`🔊 Mencari tag ${m.nama} (±2,5 dtk)…`);
+    let device = null;
+    if (navigator.bluetooth.requestLEScan) {
+      try {
+        const scan = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
+        device = await new Promise((res) => {
+          const h = (ev) => { if (cocokTag(m, ev)) { clearTimeout(t); try { scan.stop(); } catch (e) {} try { navigator.bluetooth.removeEventListener('advertisementreceived', h); } catch (e) {} res(ev.device); } };
+          const t = setTimeout(() => { try { scan.stop(); } catch (e) {} try { navigator.bluetooth.removeEventListener('advertisementreceived', h); } catch (e) {} res(null); }, 2500);
+          navigator.bluetooth.addEventListener('advertisementreceived', h);
+        });
+      } catch (e) { device = null; }
+    }
+    if (!device) {
+      setBeepStatus(`🔊 Tag ${m.nama} tidak terdeteksi otomatis — pilih dari daftar…`);
+      try { device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [0x1802, 0xFCF1, 0xFFF0, 0xFFE0] }); }
+      catch (e) { beepGuardRef.current = false; setBeepBusy(false); setBeepStatus(''); tampilToast('Pembatalan — tidak ada tag dipilih', true); return; }
+    }
+    const info = await bunyikanDevice(device);
+    beepGuardRef.current = false; setBeepBusy(false);
+    if (info === 'gagal') { setBeepStatus(''); tampilToast(`⚠️ Gagal konek ke tag ${m.nama}`, true); return; }
+    setBeepStatus(`🔊 Tag ${m.nama} berbunyi (tag bunyi saat tersambung/terputus)`);
+    setTimeout(() => setBeepStatus(''), 6000);
+  };
+  const bunyiSemua = async () => {
+    if (beepGuardRef.current) return;
+    if (!navigator.bluetooth?.requestLEScan) { tampilToast('Bunyi semua butuh Chrome/Kiwi Android (scan Bluetooth)', true); return; }
+    const daftar = (state?.jamaah || []).filter(m => m.punya_gelang && m.beacon_id);
+    if (!daftar.length) { tampilToast('Belum ada jamaah dengan gelang terpasang', true); return; }
+    beepGuardRef.current = true; setBeepBusy(true);
+    setBeepStatus(`📶 Mendeteksi tag (${daftar.length} jamaah, ±4 dtk)…`);
+    const matches = {};
+    try {
+      const scan = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
+      await new Promise((res) => {
+        const h = (ev) => { for (const m of daftar) if (!matches[m.id] && cocokTag(m, ev)) matches[m.id] = ev.device; };
+        const t = setTimeout(() => { try { scan.stop(); } catch (e) {} try { navigator.bluetooth.removeEventListener('advertisementreceived', h); } catch (e) {} res(); }, 4000);
+        navigator.bluetooth.addEventListener('advertisementreceived', h);
+      });
+    } catch (e) {}
+    const urut = daftar.filter(m => matches[m.id]);
+    if (!urut.length) { beepGuardRef.current = false; setBeepBusy(false); setBeepStatus(''); tampilToast('Tidak ada tag dalam jangkauan (±10–25 m)', true); return; }
+    const hasil = [];
+    for (const m of urut) {
+      setBeepStatus(`🔊 ${(hasil.length + 1)}/${urut.length}: ${m.nama}…`);
+      const info = await bunyikanDevice(matches[m.id]);
+      hasil.push({ nama: m.nama, ok: info !== 'gagal' });
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    beepGuardRef.current = false; setBeepBusy(false);
+    const okN = hasil.filter(h => h.ok).length;
+    setBeepStatus(`✅ ${okN}/${urut.length} tag dibunyikan` + (urut.length < daftar.length ? ` — ${daftar.length - urut.length} tag tidak terdeteksi (jauh/baterai habis)` : ''));
+    setTimeout(() => setBeepStatus(''), 8000);
+  };
 
   return (
     <Ctx.Provider value={{ sesi, state, muat, tampilToast, bolehKelola }}>
@@ -178,7 +265,13 @@ export default function App() {
                 </div>
               </div>
               <div className="kartu p-4">
-                <h2 className="text-[12px] font-extrabold uppercase tracking-wide text-hijau">Jamaah — posisi terkini</h2>
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-[12px] font-extrabold uppercase tracking-wide text-hijau">Jamaah — posisi terkini</h2>
+                  {(state?.jamaah || []).some(m => m.punya_gelang && m.beacon_id) && (
+                    <button className="btn btn-emas !min-h-[34px] !px-3 !text-[11.5px] shrink-0" disabled={beepBusy} onClick={bunyiSemua} title="Bunyikan semua tag regu yang dalam jangkauan (±10-25 m)">🔊 Bunyi Semua</button>
+                  )}
+                </div>
+                {beepStatus && <p className="text-[11.5px] text-slate-600 font-bold mt-1.5">{beepStatus}</p>}
                 <div className="mt-2 space-y-2">
                   {(state?.jamaah || []).map(m => (
                     <div key={m.id} className="flex items-center gap-3 border border-slate-200 rounded-xl p-2.5">
@@ -204,6 +297,7 @@ export default function App() {
                         {m.punya_gelang && m.punya_gelang && (
                           <a className="btn btn-merah !min-h-[38px] !px-3 !text-[11.5px] animate-pulse" href={'#/radar?cari=' + encodeURIComponent(m.id)} title="Cari jamaah ini">🔍</a>
                         )}
+                        {m.punya_gelang && m.beacon_id && <button className="btn btn-utama !min-h-[38px] !px-3 !text-[11.5px]" disabled={beepBusy} title="Bunyikan iTag jamaah ini (tag bunyi saat tersambung)" onClick={() => bunyiJamaah(m)}>🔊</button>}
                         {sesi && ['admin', 'ketrom', 'ketua-regu'].includes(sesi.peran) && <a className="btn btn-emas !min-h-[38px] !px-3 !text-[11.5px]" href={'#/radar?pasang=' + encodeURIComponent(m.id)} title="Pasangkan gelang BLE (di HP ini, utk regu sendiri)">⌚</a>}
                         <a className="btn btn-muda !min-h-[38px] !px-3 !text-[11.5px]" href={'#/kartu/' + encodeURIComponent(m.id)}>🪪</a>
                       </div>

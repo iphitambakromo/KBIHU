@@ -224,9 +224,10 @@ export default function RadarPage() {
     const cd = setInterval(() => setBunyiCooldown(c => c > 0 ? c - 1 : 0), 1000);
     setTimeout(() => clearInterval(cd), 5000);
     try {
+      setCariStatus('Pilih tag dari daftar — tag bunyi saat tersambung…');
       const device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [0x1802] }],
-        optionalServices: [0x1802, 0xFFF0]
+        acceptAllDevices: true,
+        optionalServices: [0x1802, 0xFCF1, 0xFFF0, 0xFFE0]
       });
       const server = await device.gatt.connect();
       try {
@@ -241,7 +242,7 @@ export default function RadarPage() {
           if (w) { await w.writeValue(new Uint8Array([1])); setTimeout(() => { try { server.disconnect(); } catch (e) {} }, 3500); }
         } catch (e2) {}
       }
-    } catch (e) { /* batal pilih */ }
+    } catch (e) { setCariStatus('Pembatalan — tidak ada tag dipilih'); }
   };
 
   const selesaiCari = async () => {
