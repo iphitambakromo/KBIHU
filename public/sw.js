@@ -1,5 +1,5 @@
 /* IPHI service worker — kerangka aplikasi offline (aset statis), API selalu jaringan */
-const VERSI = 'iphi-v1';
+const VERSI = 'iphi-v2';
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSI).then(c => c.addAll(['/', '/manifest.webmanifest', '/ikon192.png'])).then(() => self.skipWaiting()));
 });

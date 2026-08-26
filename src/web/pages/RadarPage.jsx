@@ -26,7 +26,7 @@ const bytesToHex = (u8) => Array.from(u8 || []).map(b => b.toString(16).padStart
    payload-nya memuat MAC tag (sama dengan yang tampil di app iTag & kolom MAC Kelola Jamaah).
    1) MAC yang sudah terdaftar di Kelola Jamaah & ketemu di payload (6 byte persis) → dipakai.
    2) Tidak terdaftar → 6 byte pertama payload apa adanya (agar kelihatan & bisa disalin). */
-function ekstrakMacSiar(hex, macPeta) {
+function ekstrakMacSiar(hex, macPeta, fallback = true) {
   if (!hex || hex.length < 12) return '';
   const H = String(hex).toUpperCase();
   if (macPeta) {
@@ -35,10 +35,17 @@ function ekstrakMacSiar(hex, macPeta) {
       if (reg.length === 12 && H.includes(reg)) return k;
     }
   }
+  if (!fallback) return '';
   const keenam = H.slice(0, 12);
   if (/^(00|ff){6}$/i.test(keenam)) return '';
   return keenam.match(/.{2}/g).join(':');
 }
+/* hex payload manufaktur terpanjang dari satu event (siaran bergiri: payload bisa di bingkai mana pun) */
+const mfrHexDari = (ev) => {
+  let best = '';
+  try { if (ev && ev.manufacturerData) ev.manufacturerData.forEach(v => { const hx = bytesToHex(v); if (hx.length > best.length) best = hx; }); } catch (e) {}
+  return best;
+};
 
 /* Nama pabrik/default iTag BUKAN identitas unik — kalau tag masih memakai nama ini,
    pasang pakai kode per-HP (device.id), bukan nama. */
@@ -259,8 +266,9 @@ export default function RadarPage() {
         if (!cariRef.current) return;
         const id = ev.device.id || ev.device.name;
         const nm = normMac(ev.device?.name);
-        // cocok: ID perangkat lokal, nama siaran (pasang lama), atau MAC global
-        if (id !== beaconId && ev.device.name !== beaconId && !(macTag && nm === macTag)) return;
+        const macSiarP = ekstrakMacSiar(mfrHexDari(ev), macPetaRef.current, false);
+        // cocok: ID perangkat lokal, nama siaran (pasang lama), atau MAC global (nama / payload siar)
+        if (id !== beaconId && ev.device.name !== beaconId && !(macTag && (nm === macTag || macSiarP === macTag))) return;
         const rssi = ev.rssi || -100;
         const pct = rssiKePct(rssi);
         const info = rssiKeLabel(rssi);
@@ -291,8 +299,8 @@ export default function RadarPage() {
         acceptAllDevices: true,
         optionalServices: [0x1802, 0xFCF1, 0xFFF0, 0xFFE0]
       });
-      // validasi: kalau MAC terdaftar, tag terpilih harus milik jamaah yang dicari
-      if (cari.mac_tag && normMac(device.name) !== cari.mac_tag) {
+      // validasi: kalau MAC terdaftar & nama tag unik, harus cocok (nama default "iTag" tak bisa diverifikasi di pemilih)
+      if (cari.mac_tag && device.name && !namaDefaultTag(String(device.name).trim()) && normMac(device.name) !== cari.mac_tag) {
         tambahLog(`⚠️ Tag terpilih bukan milik ${cari.nama} — pilih tag bernama <b>${cari.mac_tag}</b>`, true);
         return;
       }
@@ -330,9 +338,11 @@ export default function RadarPage() {
 
   const labelJarak = rssi => rssi == null ? '' : rssi > -60 ? 'sangat dekat (<±3 m)' : rssi > -80 ? 'dekat (±3-10 m)' : 'tepi jangkauan (±10-25 m)';
 
-  async function lapor(device, rssi) {
+  async function lapor(device, rssi, ev) {
     const id = device.id || device.name;
-    const mac = normMac(device.name);
+    // nama default ("iTag") bukan identitas — utamakan MAC dari payload siaran
+    const macNamaL = normMac(device.name);
+    const mac = (macNamaL && !namaDefaultTag(String(device.name || '').trim())) ? macNamaL : ekstrakMacSiar(mfrHexDari(ev), macPetaRef.current, false);
     const kini = Date.now();
     if (terlapor.current[id] && kini - terlapor.current[id] < 120000) return;
     terlapor.current[id] = kini;
@@ -389,7 +399,7 @@ export default function RadarPage() {
       scanHandle.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
       setScanAktif(true);
       tambahLog('🟢 Memindai… biarkan layar menyala.');
-      navigator.bluetooth.addEventListener('advertisementreceived', ev => lapor(ev.device, ev.rssi));
+      navigator.bluetooth.addEventListener('advertisementreceived', ev => lapor(ev.device, ev.rssi, ev));
     } catch (e) { tambahLog(`⚠️ Gagal memindai (${(e && e.name) || 'gagal'}) — pakai 📲 Pilih Tag Manual`, true); }
   }
 
@@ -405,8 +415,11 @@ export default function RadarPage() {
   })();
   const pasangListener = (ev) => {
     if (!pasangModeRef.current) return;
-    const mac = normMac(ev.device?.name);
-    if (!mac || mac !== (pasangMacRef.current || '')) return;
+    // cocok via nama iTAG(MAC) ATAU via MAC di payload siaran
+    const macNama = normMac(ev.device?.name);
+    const macSiarP = ekstrakMacSiar(mfrHexDari(ev), macPetaRef.current, false);
+    const mac = (macNama && macNama === (pasangMacRef.current || '') ? macNama : '') || (macSiarP && macSiarP === (pasangMacRef.current || '') ? macSiarP : '');
+    if (!mac) return;
     pasangModeRef.current = false;
     (async () => {
       const bunyi = await bunyikan(ev.device);
@@ -502,18 +515,20 @@ export default function RadarPage() {
     try { navigator.bluetooth?.removeEventListener('advertisementreceived', pasangHandlerRef.current); } catch (e) {}
     setPasangScan(false); setPasangList([]); setDeteksi(0); pasangRssiRef.current = {};
   };
-  async function kunciTag(mac, nmTag) {
+  async function kunciTag(mac, nmTag, macSiarArg) {
     if (!pasangId) return;
     hentiPasangSinyal();
     const namaBersih = (pasangNama || 'jamaah').replace(/ \(⌚.*$/, '');
     const nmBersih = String(nmTag || '').trim();
-    const macN0 = macAsli(nmBersih);   // nama siar = iTAG(MAC) → identitas global = MAC
+    // Prioritas identitas global: MAC dari payload siaran (identitas asli tag) → MAC dalam nama (iTAG(MAC)) → nama unik → kode per-HP
+    const macN0 = macAsli(macSiarArg || '') || macAsli(nmBersih);
     const pakaiNama = !macN0 && nmBersih && !namaDefaultTag(nmBersih);   // nama unik (tanpa MAC) = global; default = kode per-HP
     const kunci = pakaiNama ? nmBersih : mac;
+    const lain = macN0 && macPeta[macN0] && macPeta[macN0].id !== pasangId ? macPeta[macN0] : null;
     const sudah = namaMapRef.current[kunci] || namaMapRef.current[mac];
-    const pesan = (sudah && sudah.nama !== namaBersih)
-      ? `⚠️ Tag ini sudah terpasang ke ${sudah.nama}. Pindahkan ke ${namaBersih}?`
-      : `Simpan tag ini untuk ${namaBersih}?`;
+    const pesan = (lain ? `⚠️ Tag ini TERCATAT atas nama ${lain.nama}! ` : '') + (sudah && sudah.nama !== namaBersih
+      ? `Tag ini sudah terpasang ke ${sudah.nama}. Pindahkan ke ${namaBersih}?`
+      : `Simpan tag ini untuk ${namaBersih}?`);
     if (!confirm(pesan)) return;
     const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
       body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci, mac_tag: macN0 || undefined }) });
@@ -679,13 +694,13 @@ export default function RadarPage() {
                     <button className="btn btn-muda !min-h-[36px] !px-2.5 !text-[12px]" title="Sinkron nama tag (konek sebentar, tag bunyi)" disabled={!!sinkroning} onClick={() => sinkronSatu(t)}>
                       {sinkroning === t.mac ? '⏳' : '🔄'}
                     </button>
-                    <button className="btn btn-utama !min-h-[36px] !px-2.5 !text-[12px]" onClick={() => kunciTag(t.mac, t.nm)}>🔒</button>
+                    <button className="btn btn-utama !min-h-[36px] !px-2.5 !text-[12px]" onClick={() => kunciTag(t.mac, t.nm, t.macSiar)}>🔒</button>
                   </div>
                 );
               })}
               {pasangList.length > 0 && (
                 <div className="mt-2 bg-slate-50 border border-slate-200 rounded-xl p-2">
-                  <b className="text-[11px] text-slate-500">🧪 Data mentah tag — screenshot kotak ini (buat teknis):</b>
+                  <b className="text-[11px] text-slate-500">🧪 Data mentah tag (v-MAC2) — screenshot kotak ini (buat teknis):</b>
                   {pasangList.map(t => (
                     <p key={t.mac} className="text-[10px] font-mono text-slate-600 break-all leading-relaxed">
                       {namaMap[t.mac]?.nama || 'tag baru'} …{pendek(t.mac)} rssi{t.rssi} | {t.svc || 'svc:-'} {t.mfr || 'mfr:-'}{t.macSiar ? ' | 🔑' + t.macSiar + (t.jmSiar ? ' → ' + t.jmSiar.nama + ' (' + t.jmSiar.regu + ')' : '') : ''}
