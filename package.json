@@ -5,7 +5,7 @@
   "description": "IPHI \u2014 Tracking Amanah Mengawal Barisan (rebuild): satu peta GPS, titik kumpul, absensi, radar BLE, simulasi",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node -e \"require('fs').cpSync('public','dist',{recursive:true})\"",
+    "build": "vite build && node -e \"require('fs').cpSync('public','dist',{recursive:true})\" && node scripts/stamp-sw.js",
     "preview": "vite preview",
     "deploy": "npm run build && wrangler deploy",
     "db:init": "wrangler d1 execute iphi-db --local --file=schema.sql"

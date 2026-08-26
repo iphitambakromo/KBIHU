@@ -85,10 +85,16 @@ export default function App() {
       const d = await api('/api/state');
       if (!d.ok) return;
       // skip re-render bila data tak berubah (hindari gangguan saat mengetik form)
-      const sig = [d.sesi?.id || '',
-        (d.jamaah || []).map(m => (m.posisi?.waktu || '') + '|' + (m.sosAktif ? 1 : 0)).join(';'),
-        (d.kejadian || []).length + ':' + ((d.kejadian && d.kejadian[0]) ? d.kejadian[0].id : '')
-      ].join('#');
+      // signature MENDALAM: perubahan data apa pun (jamaah, gelang, MAC, titik, SOS, kejadian,
+      // posisi, stat) langsung memperbarui layar — tanpa perlu refresh browser.
+      // Halaman form tak terpengaruh (rute form tak di-poll).
+      const sig = JSON.stringify([
+        d.sesi?.id,
+        (d.jamaah || []).map(m => [m.id, m.nama, m.regu, m.paspor, m.hotel, m.catatan, m.punya_hp, m.punya_gelang, m.beacon_id, m.mac_tag, m.sosAktif, m.poisoni?.waktu]),
+        (d.titik || []).map(t => [t.id, t.nama, t.lat, t.lng, t.radius]),
+        (d.kejadian || []).map(k => [k.id, k.tipe, k.ditangani]),
+        d.stat
+      ]);
       if (sig === stateSig.current) return;
       stateSig.current = sig;
       setState(d);

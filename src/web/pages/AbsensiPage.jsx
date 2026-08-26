@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
+import { pdfAbsensi } from '../lib/absensiPdf.js';
 import { useApp } from '../App.jsx';
 
 export default function AbsensiPage() {
@@ -111,6 +112,9 @@ export default function AbsensiPage() {
             <b className="text-hijau text-[15px]">📋 {rekap.event.nama}</b>
             <span className="text-[12.5px] text-slate-500">{rekap.event.ditutup ? '⏹ ditutup' : '🔴 berjalan'}</span>
           </div>
+          <button className="btn btn-utama w-full sm:w-auto !min-h-[44px] !text-[13.5px] mt-2" onClick={() => pdfAbsensi(rekap)}>
+            📄 PDF Laporan Absensi (untuk laporan)
+          </button>
           <div className="grid grid-cols-3 gap-2 my-3 text-center">
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2"><b className="text-2xl text-hijau">{rekap.hadir}</b><br/><small className="font-bold text-slate-500">HADIR</small></div>
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-2"><b className="text-2xl text-slate-600">{rekap.total - rekap.hadir - (rekap.rows.filter(r => r.status === 'izin' || r.status === 'alfa').length)}</b><br/><small className="font-bold text-slate-500">BELUM</small></div>
