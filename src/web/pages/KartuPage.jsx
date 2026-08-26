@@ -100,7 +100,6 @@ export default function KartuPage({ id }) {
           )}
           <button className="btn btn-utama w-full" disabled={sibuk} onClick={() => kirim('checkin')}>📲 Saya di Sini (Check-in)</button>
           <button className="btn btn-merah w-full animate-pulse-slow" disabled={sibuk} onClick={() => kirim('sos')}>🆘 SOS — AKU TERPISAH!</button>
-          {d.waKetua && <a className="btn btn-muda w-full" href={`https://wa.me/${waDigits(d.waKetua)}`} target="_blank" rel="noopener">💬 Hubungi Ketua ({d.waKetuaNama || 'ketua'})</a>}
           {hasil && <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-[13.5px] font-bold leading-relaxed">{hasil}</div>}
           <p className="text-[10.5px] text-slate-400 text-center leading-relaxed">Kartu Keselamatan Jamaah — IPHI · data lokasi hanya dikirim saat tombol ditekan</p>
         </div>
