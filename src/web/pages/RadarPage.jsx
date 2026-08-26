@@ -21,6 +21,25 @@ const deteksiBrowser = (() => {
 
 const bytesToHex = (u8) => Array.from(u8 || []).map(b => b.toString(16).padStart(2, '0')).join('');
 
+/* Baca MAC produk dari payload data-manufaktur.
+   Sisaar iTAG bergilir per bingkai: bingkai nama vs bingkai payload —
+   payload-nya memuat MAC tag (sama dengan yang tampil di app iTag & kolom MAC Kelola Jamaah).
+   1) MAC yang sudah terdaftar di Kelola Jamaah & ketemu di payload (6 byte persis) → dipakai.
+   2) Tidak terdaftar → 6 byte pertama payload apa adanya (agar kelihatan & bisa disalin). */
+function ekstrakMacSiar(hex, macPeta) {
+  if (!hex || hex.length < 12) return '';
+  const H = String(hex).toUpperCase();
+  if (macPeta) {
+    for (const k of Object.keys(macPeta)) {
+      const reg = k.replace(/[^0-9A-F]/g, '');
+      if (reg.length === 12 && H.includes(reg)) return k;
+    }
+  }
+  const keenam = H.slice(0, 12);
+  if (/^(00|ff){6}$/i.test(keenam)) return '';
+  return keenam.match(/.{2}/g).join(':');
+}
+
 /* Nama pabrik/default iTag BUKAN identitas unik — kalau tag masih memakai nama ini,
    pasang pakai kode per-HP (device.id), bukan nama. */
 const namaDefaultTag = (nm) => /^(itag|itag\s+baru)$/i.test(String(nm || '').trim());
@@ -83,6 +102,8 @@ export default function RadarPage() {
   const pasangModeRef = useRef(false);
   const macPeta = {};
   for (const x of macDaftar) { const k = normMac(x.mac_tag); if (k) macPeta[k] = x; }
+  const macPetaRef = useRef(macPeta);
+  useEffect(() => { macPetaRef.current = macPeta; }, [macDaftar]);
   /* MAC -> nama jamaah (membedakan iTag yang namanya seragam) */
   const [namaMap, setNamaMap] = useState({});          // mac -> {nama, regu}
   const namaMapRef = useRef({});
@@ -123,17 +144,30 @@ export default function RadarPage() {
       if (!id) return;
       const kini = Date.now();
       const rssi = Number.isFinite(ev.rssi) ? ev.rssi : -100;
-      let svc = '', mfr = '';
+      let svc = '', mfr = '', mfrHex = '';
       try {
         if (ev.serviceData) { const p = []; ev.serviceData.forEach((v, k) => p.push((String(k).replace(/0x/i, '') + ':' + bytesToHex(v)).toUpperCase())); svc = p.join(' '); }
-        if (ev.manufacturerData) { const p = []; ev.manufacturerData.forEach((v, k) => p.push(('MFR' + Number(k).toString(16).padStart(2, '0') + ':' + bytesToHex(v)).toUpperCase())); mfr = p.join(' '); }
+        if (ev.manufacturerData) { const p = []; ev.manufacturerData.forEach((v, k) => { const hx = bytesToHex(v); if (hx.length > mfrHex.length) mfrHex = hx; p.push(('MFR' + Number(k).toString(16).padStart(2, '0') + ':' + hx).toUpperCase()); }); mfr = p.join(' '); }
       } catch (e) {}
       const st = pasangRssiRef.current;
       const nmSinkron = sinkronNamaRef.current[id];
-      if (!st[id] || rssi > st[id].rssi) st[id] = { rssi, t: kini, svc, mfr, nm: nmSinkron || ev.device.name || '', dev: ev.device };
-      else st[id].t = kini;
+      // SIAR BERGIRI: simpan yang terpanjang per perangkat, jangan buang bingkai payload MAC
+      if (!st[id]) st[id] = { rssi, t: kini, svc, mfr, mfrHex, nm: nmSinkron || ev.device.name || '', dev: ev.device };
+      else {
+        const e = st[id];
+        e.t = kini;
+        if (rssi > e.rssi) e.rssi = rssi;
+        if (svc.length > (e.svc || '').length) e.svc = svc;
+        if (mfr.length > (e.mfr || '').length) e.mfr = mfr;
+        if (mfrHex.length > (e.mfrHex || '').length) e.mfrHex = mfrHex;
+        if (nmSinkron && !e.nm) e.nm = nmSinkron;
+      }
       for (const k of Object.keys(st)) if (kini - st[k].t > 4000) delete st[k];
-      const list = Object.entries(st).map(([mac, v]) => ({ mac, rssi: v.rssi, pct: rssiKePct(v.rssi), svc: v.svc || '', mfr: v.mfr || '', nm: v.nm || '', dev: v.dev }));
+      const list = Object.entries(st).map(([mac, v]) => {
+        const macSiar = ekstrakMacSiar(v.mfrHex || '', macPetaRef.current);
+        return { mac, rssi: v.rssi, pct: rssiKePct(v.rssi), svc: v.svc || '', mfr: v.mfr || '', nm: v.nm || '', dev: v.dev,
+                 macSiar, jmSiar: macSiar && macPetaRef.current[macSiar] ? macPetaRef.current[macSiar] : null };
+      });
       list.sort((a, b) => b.rssi - a.rssi);
       setPasangList(list.slice(0, 12));
       setDeteksi(Object.keys(st).length);
@@ -636,8 +670,8 @@ export default function RadarPage() {
                 return (
                   <div key={t.mac} className={`flex items-center gap-2 border rounded-xl p-2 ${i === 0 ? 'border-hijau bg-emerald-50' : 'border-slate-200'}`}>
                     <div className="flex-1 min-w-0">
-                      <b className="text-[13px] block truncate">{i === 0 ? '🎯 ' : ''}{nm ? nm.nama : (t.nm ? '🏷️ ' + t.nm : 'Tag baru')}</b>
-                      <small className="text-slate-500 text-[11px]">iTag …{pendek(t.mac)} · {t.rssi} dBm{nm && nm.regu ? ' · ' + nm.regu : ''}</small>
+                      <b className="text-[13px] block truncate">{i === 0 ? '🎯 ' : ''}{t.jmSiar ? '✅ ' + t.jmSiar.nama + ' (MAC siar)' : (nm ? nm.nama : (t.nm ? '🏷️ ' + t.nm : 'Tag baru'))}</b>
+                      <small className="text-slate-500 text-[11px]">{t.macSiar || 'iTag'} …{pendek(t.mac)} · {t.rssi} dBm{(t.jmSiar && t.jmSiar.regu) ? ' · ' + t.jmSiar.regu : (nm && nm.regu ? ' · ' + nm.regu : '')}</small>
                     </div>
                     <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
                       <div className={`h-full ${t.pct > 60 ? 'bg-emerald-500' : t.pct > 30 ? 'bg-amber-400' : 'bg-blue-400'}`} style={{ width: t.pct + '%' }} />
@@ -654,7 +688,7 @@ export default function RadarPage() {
                   <b className="text-[11px] text-slate-500">🧪 Data mentah tag — screenshot kotak ini (buat teknis):</b>
                   {pasangList.map(t => (
                     <p key={t.mac} className="text-[10px] font-mono text-slate-600 break-all leading-relaxed">
-                      {namaMap[t.mac]?.nama || 'tag baru'} …{pendek(t.mac)} rssi{t.rssi} | {t.svc || 'svc:-'} {t.mfr || 'mfr:-'}
+                      {namaMap[t.mac]?.nama || 'tag baru'} …{pendek(t.mac)} rssi{t.rssi} | {t.svc || 'svc:-'} {t.mfr || 'mfr:-'}{t.macSiar ? ' | 🔑' + t.macSiar + (t.jmSiar ? ' → ' + t.jmSiar.nama + ' (' + t.jmSiar.regu + ')' : '') : ''}
                     </p>
                   ))}
                 </div>
@@ -664,7 +698,7 @@ export default function RadarPage() {
           {sinkron && <p className="text-[12px] mt-2 font-bold text-slate-700">{sinkron}</p>}
           {pasangInfo && <p className="text-[12.5px] mt-2 font-bold">{pasangInfo}</p>}
           <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
-            💡 Nama tag <b>iTAG(MAC)</b>? MAC-nya tersimpan otomatis — dikenali radar HP mana pun, tanpa pasang ulang (gotong royong). Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda. Tag masih bernama pabrik ("iTag")? Terpasang kode di HP ini — <b>HANYA perangkat ini</b> yang akan membacanya; di perangkat lain tetap "iTag". Tiap KaRu pasang tag rombongannya di HP-nya sendiri, radar HP itu yang membacanya. Tag punya nama unik? Terkenal di HP mana pun (sinkron 🔄 dulu bila perlu).
+            💡 <b>MAC = identitas asli tag</b> (lihat di app iTag / kolom MAC di Kelola Jamaah ✏️). Tag yang MAC-nya terdaftar akan ditandai <b>✅ (MAC siar)</b> di daftar scan dari HP mana pun — gotong royong, tanpa perlu ganti nama tag. Kalau nama tag <b>iTAG(MAC)</b>, MAC ikut tersimpan otomatis. Dekatkan HANYA tag jamaah ini: sinyal terkuat = tag di dekat Anda. Kotak data mentah menampilkan <b>🔑 MAC siaran</b> tiap tag — salin ke Kelola Jamaah bila belum terisi.
           </p>
         </div>
       )}
