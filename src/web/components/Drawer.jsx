@@ -1,4 +1,5 @@
 import React from 'react';
+import Kabah from './Kabah.jsx';
 export default function Drawer({ open, onClose, onKeluar, sesi, rute }) {
   const grup = [
     { t: 'Utama', items: [
@@ -24,7 +25,7 @@ export default function Drawer({ open, onClose, onKeluar, sesi, rute }) {
         transition-transform duration-300 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="bg-gradient-to-r from-hijau to-hijau2 text-white p-4 flex items-center gap-3">
           <div className="flex-1">
-            <b className="text-[15px]">🕌 IPHI</b>
+            <b className="flex items-center gap-1.5 text-[15px]"><Kabah size={20} /> IPHI</b>
             <small className="block opacity-85 text-[11px] mt-1">
               {sesi.nama} · {sesi.peran === 'admin' ? 'Admin' : sesi.peran === 'ketrom' ? 'KaRom' : 'KaRu ' + (sesi.regu || '')}
             </small>

@@ -13,6 +13,7 @@ import DiagPage from './pages/DiagPage.jsx';
 import PengaturanPage from './pages/PengaturanPage.jsx';
 import RadarPage from './pages/RadarPage.jsx';
 import KawalPage from './pages/KawalPage.jsx';
+import Kabah from './components/Kabah.jsx';
 import JamaahPage from './pages/JamaahPage.jsx';
 
 const Ctx = createContext(null);
@@ -33,7 +34,7 @@ function Login({ onOk }) {
   return (
     <div className="min-h-full flex items-center justify-center p-4 bg-gradient-to-br from-hijau to-hijau2">
       <div className="kartu w-full max-w-md p-7 text-center">
-        <div className="text-4xl">🕌</div>
+        <div className="flex justify-center"><Kabah size={58} /></div>
         <h1 className="text-2xl font-extrabold text-hijau mt-2">IPHI</h1>
         <p className="text-[12.5px] font-bold text-hijau leading-relaxed mt-1">
           Tracking Amanah Mengawal Barisan<br/>Awasi Kendali Rombongan · Optimalisasi Manajemen Operasional
@@ -235,7 +236,7 @@ export default function App() {
           <header className="bg-gradient-to-r from-hijau to-hijau2 text-white flex items-center gap-3 px-3 py-2.5 shadow-lg z-[1200]">
             <button className="w-12 h-12 rounded-xl bg-white/15 border border-white/25 text-xl" onClick={() => setDrawer(true)} aria-label="Menu">☰</button>
             <a href="#/" className="min-w-0 flex-1 -m-1 p-1" title="Kembali ke Dashboard">
-              <h1 className="font-extrabold leading-tight text-[17px]">🕌 IPHI</h1>
+              <h1 className="flex items-center gap-1.5 font-extrabold leading-tight text-[22px]"><Kabah size={27} /> IPHI</h1>
               <p className="text-white/80 text-[10px] leading-snug">Tracking Amanah Mengawal Barisan · Awasi Kendali Rombongan · Optimalisasi Manajemen Operasional</p>
             </a>
             <span className="hidden sm:inline-block bg-white/15 border border-white/25 rounded-full px-3 py-1.5 text-[12px] font-bold">
