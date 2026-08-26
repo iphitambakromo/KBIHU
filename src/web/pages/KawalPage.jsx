@@ -35,7 +35,7 @@ const relDtk = (t) => { const s = Math.max(0, Math.round((Date.now() - t) / 1000
 export default function KawalPage() {
   const [jmList, setJmList] = useState(null);   // jamaah ber-gelang (sudah di-scope peran oleh worker)
   const [pilih, setPilih] = useState(new Set());
-  const [ambang, setAmbang] = useState(-75);    // ambang radius (dBm)
+  const [ambang, setAmbang] = useState(() => { try { const a = parseInt(localStorage.getItem('iphi_kawal_ambang'), 10); if (a >= -90 && a <= -50) return a; } catch (e) {} return -75; }); // ambang radius (dBm)
   const [bunyi, setBunyi] = useState(true);     // getar + bunyi
   const [aktif, setAktif] = useState(false);
   const [st, setSt] = useState({});             // jamaahId -> {mode, outDetik, tanpa, rssi}
@@ -50,6 +50,7 @@ export default function KawalPage() {
   const titikLastRef = useRef(0);
 
   useEffect(() => { ambRef.current = ambang; pilihRef.current = pilih; bunyiRef.current = bunyi; }, [ambang, pilih, bunyi]);
+  useEffect(() => { try { localStorage.setItem('iphi_kawal_ambang', String(ambang)); } catch (e) {} }, [ambang]);
 
   /* Muat data jamaah (scope peran otomatis) + daftar MAC global */
   useEffect(() => {
@@ -209,7 +210,11 @@ export default function KawalPage() {
           <label className="text-[12px] font-bold text-slate-600 flex justify-between">
             <span>Radius ambang</span><span className="font-mono">{ambang} dBm</span>
           </label>
-          <input type="range" min="-50" max="-90" step="1" value={ambang} onChange={e => setAmbang(Number(e.target.value))} className="w-full accent-emerald-700" />
+          <input type="range" min="-90" max="-50" step="1" value={ambang} onChange={e => setAmbang(Number(e.target.value))} className="w-full accent-emerald-700" />
+          <div className="flex gap-2 mt-1.5">
+            <button className="btn flex-1 !min-h-[40px] !text-[12.5px]" onClick={() => setAmbang(a => Math.max(-90, a - 5))} aria-label="Radius lebih jauh">−5 · radius jauh</button>
+            <button className="btn flex-1 !min-h-[40px] !text-[12.5px]" onClick={() => setAmbang(a => Math.min(-50, a + 5))} aria-label="Radius lebih dekat">+5 · radius dekat</button>
+          </div>
         </div>
         <label className="flex items-center gap-2 text-[13px] font-bold text-slate-700">
           <input type="checkbox" checked={bunyi} onChange={e => setBunyi(e.target.checked)} className="accent-emerald-700" />
