@@ -32,8 +32,10 @@ export default function AbsensiPage() {
   useEffect(() => {
     (async () => {
       const ev = await muatAktif();
+      const d = await api('/api/absensi/event');
+      if (d.ok) setEvents(d.events || []);
       if (ev) muatRekap(ev.id);
-      muatEvents();
+      else if (d.ok && d.events.length) muatRekap(d.events[0].id);  // tak ada acara aktif → tampilkan riwayat terbaru (tombol PDF langsung tampak)
       const st = await api('/api/state');
       if (st.ok) setTitikList(st.titik || []);
     })();
@@ -62,6 +64,12 @@ export default function AbsensiPage() {
     if (d.ok) muatRekap(aktif.id); else tampilToast('Gagal: ' + (d.error || ''), true);
   };
   const lihatRiwayat = async (id) => { await muatAktif(); muatRekap(id); };
+  const hapusEvent = async (e) => {
+    if (!confirm('Hapus acara "' + e.nama + '" beserta datanya? Tindakan ini tidak bisa dibatalkan.')) return;
+    const d = await api('/api/absensi/hapus', { method: 'POST', body: JSON.stringify({ id: e.id }) });
+    if (d.ok) { tampilToast('🗑 Acara dihapus'); if (rekap && rekap.event.id === e.id) setRekap(null); muatEvents(); muatAktif(); }
+    else tampilToast('Gagal: ' + (d.error || ''), true);
+  };
 
   const urut = (a, b) => (a.status === 'hadir' ? 0 : a.status ? 1 : 2) - (b.status === 'hadir' ? 0 : b.status ? 1 : 2) || a.nama.localeCompare(b.nama);
 
@@ -154,13 +162,19 @@ export default function AbsensiPage() {
         <div className="mt-2 space-y-2">
           {events.length === 0 && <p className="text-slate-500 text-[13px]">Belum ada acara.</p>}
           {events.map(e => (
-            <button key={e.id} onClick={() => lihatRiwayat(e.id)}
-              className="w-full text-left border border-slate-200 rounded-xl p-3 hover:bg-emerald-50 transition">
-              <b className="text-[13.5px]">{e.ditutup ? '🕘' : '🔴'} {e.nama}</b>
-              <small className="block text-slate-500 text-[11.5px] mt-0.5">
-                {new Date(e.waktu).toLocaleString('id-ID')} · titik {e.titik_nama || '—'} · {e.regu || 'semua regu'} · <b>{e.hadir} hadir</b>
-              </small>
-            </button>
+            <div key={e.id} data-event={e.id} onClick={() => lihatRiwayat(e.id)}
+              className="w-full text-left border border-slate-200 rounded-xl p-3 hover:bg-emerald-50 transition cursor-pointer flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <b className="text-[13.5px]">{e.ditutup ? '🕘' : '🔴'} {e.nama}</b>
+                <small className="block text-slate-500 text-[11.5px] mt-0.5">
+                  {new Date(e.waktu).toLocaleString('id-ID')} · titik {e.titik_nama || '—'} · {e.regu || 'semua regu'} · <b>{e.hadir} hadir</b>
+                </small>
+              </div>
+              {bolehKelola && (
+                <button className="btn btn-merah !min-h-[32px] !px-2.5 !text-[11px] shrink-0" title="Hapus acara ini dari riwayat"
+                  onClick={ev => { ev.stopPropagation(); hapusEvent(e); }}>🗑 Hapus</button>
+              )}
+            </div>
           ))}
         </div>
       </div>

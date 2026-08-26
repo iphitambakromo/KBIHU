@@ -280,6 +280,18 @@ async function tangani(request, env) {
     await DB.prepare('UPDATE absensi_event SET ditutup=1 WHERE id=?').bind(String(b.id || '')).run();
     return j({ ok: true });
   }
+  if (path === '/api/absensi/hapus' && method === 'POST') {
+    if (!USER) return tolak();
+    if (!['admin', 'ketrom', 'ketua-regu'].includes(USER.peran)) return j({ ok: false, error: 'tidak diizinkan' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const ev = await DB.prepare('SELECT * FROM absensi_event WHERE id=?').bind(String(b.id || '')).first();
+    if (!ev) return j({ ok: false, error: 'acara tidak ditemukan' }, 404);
+    if (USER.peran === 'ketua-regu' && String(ev.regu || '').trim() !== String(USER.regu || '').trim())
+      return j({ ok: false, error: 'di luar regu Anda' }, 403);
+    await DB.prepare('DELETE FROM absensi WHERE event_id=?').bind(ev.id).run();
+    await DB.prepare('DELETE FROM absensi_event WHERE id=?').bind(ev.id).run();
+    return j({ ok: true, nama: ev.nama });
+  }
   if (path === '/api/absensi/event' && method === 'GET') {
     if (!USER) return tolak();
     let rows = (await DB.prepare('SELECT e.*, t.nama AS titik_nama FROM absensi_event e LEFT JOIN titik t ON t.id=e.titik_id ORDER BY e.waktu DESC LIMIT 30').all()).results || [];
