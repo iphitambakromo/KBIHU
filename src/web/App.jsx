@@ -12,6 +12,7 @@ import PenggunaPage from './pages/PenggunaPage.jsx';
 import DiagPage from './pages/DiagPage.jsx';
 import PengaturanPage from './pages/PengaturanPage.jsx';
 import RadarPage from './pages/RadarPage.jsx';
+import KawalPage from './pages/KawalPage.jsx';
 import JamaahPage from './pages/JamaahPage.jsx';
 
 const Ctx = createContext(null);
@@ -236,7 +237,7 @@ export default function App() {
             </span>
           </header>
 
-          {ruteBersih === 'absensi' ? <div className="flex-1 overflow-y-auto"><AbsensiPage /></div> : ruteBersih === 'radar' ? <div className="flex-1 overflow-y-auto"><RadarPage /></div>
+          {ruteBersih === 'absensi' ? <div className="flex-1 overflow-y-auto"><AbsensiPage /></div> : ruteBersih === 'radar' ? <div className="flex-1 overflow-y-auto"><RadarPage /></div> : ruteBersih === 'kawal' ? <div className="flex-1 overflow-y-auto"><KawalPage /></div>
             : ruteBersih === 'jamaah' ? <div className="flex-1 overflow-y-auto"><JamaahPage /></div>
             : ruteBersih === 'progres' ? <div className="flex-1 overflow-y-auto"><ProgresPage /></div>
             : ruteBersih === 'kelola' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><KelolaPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)

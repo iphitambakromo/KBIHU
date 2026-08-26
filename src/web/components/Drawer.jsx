@@ -5,6 +5,7 @@ export default function Drawer({ open, onClose, onKeluar, sesi, rute }) {
       { l: '🗺️ Dashboard', href: '#/' },
       { l: '✅ Absensi', href: '#/absensi' },
       { l: '📡 Radar Gelang', href: '#/radar' },
+      { l: '🛡️ Kawal', href: '#/kawal' },
       { l: '👥 Jamaah (WA)', href: '#/jamaah' },
       { l: '📊 Progres Latihan', href: '#/progres' },
       { l: '🪪 Cetak Kartu', href: '#/cetak', khusus: sesi.peran === 'admin' || sesi.peran === 'ketrom' },
