@@ -224,7 +224,7 @@ export default function RadarPage() {
       const m = (st.jamaah || []).find(x => x.id === pasangId);
       if (m) {
         setPasangMac(m.mac_tag || '');
-        setPasangNama(m.nama + (m.mac_tag ? ' (⌚ ' + m.mac_tag + ')' : m.beacon_id ? ' (⌚ ' + m.beacon_id + ')' : ''));
+        setPasangNama(m.nama + (m.mac_tag ? ' (⌚ ' + m.mac_tag + ')' : m.beacon_id ? ' (⌚ ' + m.beacon_id.split(',')[0].slice(0, 12) + (m.beacon_id.includes(',') ? '…' : '') + ')' : ''));
       }
     })();
   }, [pasangId]);
@@ -260,6 +260,8 @@ export default function RadarPage() {
 
   const mulaiCariScan = async (beaconId, macTag) => {
     if (!navigator.bluetooth) { setCariStatus('⚠️ Browser tidak mendukung bluetooth — gunakan Chrome Android'); return; }
+    // multi-HP: beacon_id kini DAFTAR kode per-HP — cocok bila kode/nama termasuk di dalamnya
+    const kodeCari = new Set(String(beaconId || '').split(',').map(s => s.trim()).filter(Boolean));
     try {
       cariScanRef.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
       navigator.bluetooth.addEventListener('advertisementreceived', ev => {
@@ -267,8 +269,8 @@ export default function RadarPage() {
         const id = ev.device.id || ev.device.name;
         const nm = normMac(ev.device?.name);
         const macSiarP = ekstrakMacSiar(mfrHexDari(ev), macPetaRef.current, false);
-        // cocok: ID perangkat lokal, nama siaran (pasang lama), atau MAC global (nama / payload siar)
-        if (id !== beaconId && ev.device.name !== beaconId && !(macTag && (nm === macTag || macSiarP === macTag))) return;
+        // cocok: ID perangkat lokal (daftar multi-HP), nama siaran (pasang lama), atau MAC global (nama / payload siar)
+        if (!kodeCari.has(id) && !kodeCari.has(String(ev.device.name || '')) && !(macTag && (nm === macTag || macSiarP === macTag))) return;
         const rssi = ev.rssi || -100;
         const pct = rssiKePct(rssi);
         const info = rssiKeLabel(rssi);
@@ -407,7 +409,7 @@ export default function RadarPage() {
   const macAsli = (nm) => { const k = normMac(nm); return /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(k) ? k : ''; };
   const simpanHasilPasang = async (device, mac) => {
     const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
-      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: device.id, mac_tag: mac || undefined }) });
+      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: device.id, sanding_tambah: true, mac_tag: mac || undefined }) });
     return await r.json();
   };
   const muatMacDaftar = () => (async () => {
@@ -478,7 +480,7 @@ export default function RadarPage() {
     if (!confirm(`Simpankan tag ini untuk ${namaBersih}${lain ? ` — PERHATI: tercatat atas nama ${lain.nama}!` : ''}?`)) { try { device.gatt.disconnect(); } catch (e) {} setPasangInfo('Batal.'); return; }
     try { device.gatt.disconnect(); } catch (e) {}
     const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
-      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci, mac_tag: mac || undefined }) });
+      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci, sanding_tambah: true, mac_tag: mac || undefined }) });
     const d = await r.json();
     const cakupan = mac ? ' — MAC tersimpan: radar di HP mana pun mengenali (gotong royong)'
       : pakaiNama ? ' — radar di HP mana pun mengenali lewat nama'
@@ -531,7 +533,7 @@ export default function RadarPage() {
       : `Simpan tag ini untuk ${namaBersih}?`);
     if (!confirm(pesan)) return;
     const r = await fetch('/api/jamaah', { method: 'PUT', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + localStorage.getItem('iphi_tok') },
-      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci, mac_tag: macN0 || undefined }) });
+      body: JSON.stringify({ id: pasangId, punya_gelang: true, beacon_id: kunci, sanding_tambah: true, mac_tag: macN0 || undefined }) });
     const d = await r.json();
     if (d.ok) {
       setNamaMap(m => ({ ...m, [kunci]: { nama: namaBersih, regu: '' } }));
