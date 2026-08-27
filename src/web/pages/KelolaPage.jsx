@@ -77,40 +77,55 @@ export default function KelolaPage() {
         <button className="btn btn-muda" onClick={muat}>🔄 Segarkan</button>
       </div>
 
-      <div className="kartu mt-3 overflow-x-auto">
-        <table className="w-full text-[13px]">
-          <thead><tr className="bg-hijau text-white text-left">
-            <th className="p-2.5">Jamaah</th><th className="p-2.5">Paspor</th><th className="p-2.5">Umur</th>
-            <th className="p-2.5">Perangkat</th><th className="p-2.5">Gelang</th><th className="p-2.5">Catatan</th><th className="p-2.5">Aksi</th>
-          </tr></thead>
-          <tbody>
-            {rows.map(m => (
-              <tr key={m.id} className="border-b border-slate-100">
-                <td className="p-2.5">
-                  <div className="flex items-center gap-2">
-                    {m.foto ? <img src={m.foto} alt="" className="w-9 h-9 rounded-lg object-cover" />
-                      : <div className="w-9 h-9 rounded-lg bg-emerald-50 text-hijau grid place-items-center font-extrabold text-[12px]">{(m.nama || '?').replace(/^(H\.|Hj\.)\s*/, '').split(' ').slice(0, 2).map(x => x[0]).join('')}</div>}
-                    <div><b>{m.nama}</b><br /><small className="text-slate-500">{m.regu || '—'}</small></div>
-                  </div>
-                </td>
-                <td className="p-2.5">{m.paspor || '—'}</td>
-                <td className="p-2.5">{m.umur || '—'}</td>
-                <td className="p-2.5">{m.punya_hp && m.punya_gelang ? '📱+⌚' : m.punya_hp ? '📱' : '⌚'}</td>
-                <td className="p-2.5 text-[11.5px]" title={m.mac_tag ? 'MAC terdaftar — radar HP mana pun bisa mengenali' : 'isi MAC di ✏️'}>{m.mac_tag || m.beacon_id || '—'}</td>
-                <td className="p-2.5 max-w-[160px]"><small>{m.catatan || '—'}</small></td>
-                <td className="p-2.5">
-                  <div className="flex flex-wrap gap-1.5">
-                    <a className="btn btn-muda !min-h-[38px] !px-2.5 !text-[11.5px]" href={'#/kartu/' + encodeURIComponent(m.id)}>🪪</a>
-                    <button className="btn btn-muda !min-h-[38px] !px-2.5 !text-[11.5px]" onClick={() => tautanLatihan(m)}>🥾</button>
-                    <a className="btn btn-emas !min-h-[38px] !px-2.5 !text-[11.5px]" href={'#/radar?pasang=' + encodeURIComponent(m.id)}>⌚</a>
-                    <button className="btn btn-muda !min-h-[38px] !px-2.5 !text-[11.5px]" onClick={() => setForm({ ...KOSONG, ...m, punya_hp: !!m.punya_hp, punya_gelang: !!m.punya_gelang })}>✏️</button>
-                    <button className="btn btn-merah !min-h-[38px] !px-2.5 !text-[11.5px]" onClick={() => hapus(m)}>🗑️</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {rows.map(m => (
+          <div key={m.id} className="kartu p-4 border border-slate-200 rounded-xl hover:shadow-md transition-shadow">
+            {/* Header: Foto + Nama */}
+            <div className="flex items-center gap-3 mb-3">
+              {m.foto ? <img src={m.foto} alt="" className="w-12 h-12 rounded-xl object-cover shrink-0" />
+                : <div className="w-12 h-12 rounded-xl bg-emerald-50 text-hijau grid place-items-center font-extrabold text-[14px] shrink-0">{(m.nama || '?').replace(/^(H\.|Hj\.)\s*/, '').split(' ').slice(0, 2).map(x => x[0]).join('')}</div>}
+              <div className="flex-1 min-w-0">
+                <b className="text-[15px] block truncate">{m.nama}</b>
+                <small className="text-slate-500 text-[12px] block">{m.regu || '—'}</small>
+              </div>
+            </div>
+            
+            {/* Info */}
+            <div className="space-y-1.5 mb-3">
+              <div className="flex items-center gap-2 text-[12px]">
+                <span className="text-slate-400 w-16">Umur</span>
+                <span className="font-medium">{m.umur || '—'} tahun</span>
+              </div>
+              <div className="flex items-center gap-2 text-[12px]">
+                <span className="text-slate-400 w-16">Perangkat</span>
+                <span className="font-medium">{m.punya_hp && m.punya_gelang ? '📱+⌚' : m.punya_hp ? '📱' : m.punya_gelang ? '⌚' : '—'}</span>
+              </div>
+              <div className="flex items-center gap-2 text-[12px]">
+                <span className="text-slate-400 w-16">Paspor</span>
+                <span className="font-medium">{m.paspor || '—'}</span>
+              </div>
+              <div className="flex items-center gap-2 text-[12px]">
+                <span className="text-slate-400 w-16">MAC</span>
+                <span className="font-mono text-[11px] text-slate-600 truncate" title={m.mac_tag || '—'}>{m.mac_tag || '—'}</span>
+              </div>
+              {m.catatan && (
+                <div className="flex items-start gap-2 text-[12px]">
+                  <span className="text-slate-400 w-16 shrink-0">Catatan</span>
+                  <span className="text-slate-600 text-[11px]">{m.catatan}</span>
+                </div>
+              )}
+            </div>
+            
+            {/* Tombol Aksi */}
+            <div className="flex flex-wrap gap-1.5 pt-2 border-t border-slate-100">
+              <a className="btn btn-muda !min-h-[36px] !px-2.5 !text-[11px]" href={'#/kartu/' + encodeURIComponent(m.id)}>🪪 Kartu</a>
+              <button className="btn btn-muda !min-h-[36px] !px-2.5 !text-[11px]" onClick={() => tautanLatihan(m)}>🥾 Latihan</button>
+              <a className="btn btn-emas !min-h-[36px] !px-2.5 !text-[11px]" href={'#/radar?pasang=' + encodeURIComponent(m.id)}>⌚ Pasang</a>
+              <button className="btn btn-muda !min-h-[36px] !px-2.5 !text-[11px]" onClick={() => setForm({ ...KOSONG, ...m, punya_hp: !!m.punya_hp, punya_gelang: !!m.punya_gelang })}>✏️ Edit</button>
+              <button className="btn btn-merah !min-h-[36px] !px-2.5 !text-[11px]" onClick={() => hapus(m)}>🗑️ Hapus</button>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* dialog form */}

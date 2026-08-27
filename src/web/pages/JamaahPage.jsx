@@ -82,6 +82,11 @@ export default function JamaahPage() {
                   {m.punya_gelang ? ' · ⌚' : ''}
                   {m.hp && wa ? ' · ' + tampilkanHp(m.hp) : ''}
                 </small>
+                {m.mac_tag && (
+                  <small className="text-slate-400 text-[11px] block font-mono mt-0.5">
+                    MAC: {m.mac_tag}
+                  </small>
+                )}
               </div>
               <div className="flex gap-1.5 shrink-0">
                 {m.punya_gelang && (m.beacon_id || m.mac_tag) && (
