@@ -138,7 +138,57 @@ export default function KelolaPage() {
               <label className="flex items-center gap-2"><input type="checkbox" className="w-5 h-5 accent-[#B48A2F]" checked={form.punya_gelang} onChange={e => setForm({ ...form, punya_gelang: e.target.checked })} /> ⌚ Gelang BLE</label>
             </div>
             {form.punya_gelang && <><label className="text-[12px] font-bold text-slate-500 block mt-2">📡 MAC Gelang <small className="text-slate-400 normal-case font-normal">(nama tag, mis. saat dipindai)</small></label>
-              <input ref={macRef} key={'mac-' + (form.id || 'baru')} className="input !font-mono" defaultValue={form.mac_tag || ''} placeholder="iTAG(FF:FF:12:A4:FF:63)" />
+              <div className="flex gap-2">
+                <input ref={macRef} key={'mac-' + (form.id || 'baru')} className="input !font-mono flex-1" defaultValue={form.mac_tag || ''} placeholder="iTAG(FF:FF:12:A4:FF:63)" />
+                <button
+                  type="button"
+                  className="btn btn-utama !min-h-[38px] !px-3 !text-[12px]"
+                  onClick={async () => {
+                    if (!navigator.bluetooth) {
+                      tampilToast('⚠️ Browser tidak mendukung Bluetooth', true);
+                      return;
+                    }
+                    try {
+                      tampilToast('📡 Memindai iTag...');
+                      const device = await navigator.bluetooth.requestDevice({
+                        acceptAllDevices: true,
+                        optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb']
+                      });
+                      
+                      tampilToast('🔗 Menghubungkan ke iTag...');
+                      const server = await device.gatt.connect();
+                      const service = await server.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
+                      const characteristic = await service.getCharacteristic('0000ffe3-0000-1000-8000-00805f9b34fb');
+                      const value = await characteristic.readValue();
+                      
+                      // Konversi ke MAC address
+                      const macBytes = new Uint8Array(value.buffer);
+                      const mac = Array.from(macBytes).map(b => b.toString(16).padStart(2, '0')).join(':').toUpperCase();
+                      
+                      // Update input field MAC (hanya jika belum ada)
+                      if (macRef.current && !macRef.current.value) {
+                        macRef.current.value = mac;
+                      }
+                      
+                      // Simpan device.id ke beacon_id (tambahkan, jangan timpa)
+                      const deviceId = device.id;
+                      const beaconSekarang = form.beacon_id || '';
+                      const beaconBaru = beaconSekarang 
+                        ? beaconSekarang + ',' + deviceId 
+                        : deviceId;
+                      
+                      setForm(f => ({ ...f, beacon_id: beaconBaru }));
+                      
+                      server.disconnect();
+                      tampilToast(`✅ MAC: ${mac} | Device ID: ${deviceId.slice(-8)} ditambahkan`);
+                    } catch (error) {
+                      tampilToast(`❌ Error: ${error.message}`, true);
+                    }
+                  }}
+                >
+                  📡 Scan iTag
+                </button>
+              </div>
               <label className="text-[12px] font-bold text-slate-500 block mt-2">ID Gelang (beacon)</label>
               <input className="input" value={form.beacon_id} onChange={e => setForm({ ...form, beacon_id: e.target.value })} placeholder="otomatis saat dipasangkan lewat Radar" /></>}
             <label className="text-[12px] font-bold text-slate-500 block mt-2">Catatan</label>
