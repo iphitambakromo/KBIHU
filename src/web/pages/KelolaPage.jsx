@@ -150,9 +150,18 @@ export default function KelolaPage() {
                     }
                     try {
                       tampilToast('📡 Memindai iTag...');
+                      // Filter device berdasarkan nama "iTAG" untuk mengurangi kebingungan
                       const device = await navigator.bluetooth.requestDevice({
-                        acceptAllDevices: true,
+                        filters: [
+                          { namePrefix: 'iTAG' },  // Hanya tampilkan device bernama iTAG
+                        ],
                         optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb']
+                      }).catch(() => {
+                        // Jika filter gagal, gunakan acceptAllDevices
+                        return navigator.bluetooth.requestDevice({
+                          acceptAllDevices: true,
+                          optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb']
+                        });
                       });
                       
                       tampilToast('🔗 Menghubungkan ke iTag...');
