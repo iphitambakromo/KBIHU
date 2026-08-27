@@ -142,7 +142,7 @@ export default function RadarPage() {
         if (mfrHex.length > (e.mfrHex || '').length) e.mfrHex = mfrHex;
         if (nmSinkron && !e.nm) e.nm = nmSinkron;
       }
-      for (const k of Object.keys(st)) if (kini - st[k].t > 4000) delete st[k];
+      for (const k of Object.keys(st)) if (kini - st[k].t > 2000) delete st[k];
       const list = Object.entries(st).map(([mac, v]) => {
         const macSiar = ekstrakMacSiar(v.mfrHex || '', macPetaRef.current);
         return { mac, rssi: v.rssi, pct: rssiKePct(v.rssi), svc: v.svc || '', mfr: v.mfr || '', nm: v.nm || '', dev: v.dev,
@@ -224,10 +224,10 @@ export default function RadarPage() {
   const rssiKePct = (rssi) => Math.max(0, Math.min(100, Math.round((rssi + 90) / 50 * 100)));
   const pendek = (id) => String(id || '').replace(/=+$/, '').slice(-4); // 4 char terakhir kode tag (tanpa padding base64)
   const rssiKeLabel = (rssi) => {
-    if (rssi > -50) return { label: '🎯 DITEMUKAN! Tekan 🔊', warna: 'bg-red-500', vibrate: [100,50,100,50,100,50,100,50,100,50,100] };
-    if (rssi > -65) return { label: '🔴 SANGAT DEKAT', warna: 'bg-red-400', vibrate: [100,100,100,100,100,100,100] };
-    if (rssi > -75) return { label: '🟡 DEKAT — teruskan', warna: 'bg-yellow-400', vibrate: [200,400,200,400,200] };
-    if (rssi > -85) return { label: '🟢 ADA SINYAL — jalan', warna: 'bg-emerald-400', vibrate: [200,2000] };
+    if (rssi > -45) return { label: '🎯 DITEMUKAN! Tekan 🔊', warna: 'bg-red-500', vibrate: [100,50,100,50,100,50,100,50,100,50,100] };
+    if (rssi > -55) return { label: '🔴 SANGAT DEKAT', warna: 'bg-red-400', vibrate: [100,100,100,100,100,100,100] };
+    if (rssi > -65) return { label: '🟡 DEKAT — teruskan', warna: 'bg-yellow-400', vibrate: [200,400,200,400,200] };
+    if (rssi > -75) return { label: '🟢 ADA SINYAL — jalan', warna: 'bg-emerald-400', vibrate: [200,2000] };
     return { label: '🔵 JAUH — jalan perlahan', warna: 'bg-blue-400', vibrate: [200,4000] };
   };
 
@@ -331,7 +331,7 @@ export default function RadarPage() {
 
   /* akhir MODE CARI */
 
-  const labelJarak = rssi => rssi == null ? '' : rssi > -60 ? 'sangat dekat (<±3 m)' : rssi > -80 ? 'dekat (±3-10 m)' : 'tepi jangkauan (±10-25 m)';
+  const labelJarak = rssi => rssi == null ? '' : rssi > -50 ? 'sangat dekat (<±2 m)' : rssi > -65 ? 'dekat (±2-5 m)' : rssi > -75 ? 'tepi jangkauan (±5-15 m)' : 'jauh (>15 m)';
 
   async function lapor(device, rssi, ev) {
     const id = device.id || device.name;
