@@ -8,6 +8,7 @@ import { waLink, tampilkanHp } from '../lib/wa.js';
 export default function JamaahPage() {
   const { state, sesi } = useApp();
   const [cari, setCari] = useState('');
+  const [bunyiCooldown, setBunyiCooldown] = useState({});
 
   const list = (state?.jamaah || []).filter(m => {
     if (!cari.trim()) return true;
@@ -16,6 +17,42 @@ export default function JamaahPage() {
   });
 
   const reguSaya = sesi && sesi.peran === 'ketua-regu' ? 'Regu Anda: ' + (sesi.regu || '') : 'Semua jamaah (hak akses Anda)';
+
+  // Fungsi untuk bunyikan gelang
+  const bunyikanGelang = async (m) => {
+    if (!m.punya_gelang || (!m.beacon_id && !m.mac_tag)) return;
+    if (bunyiCooldown[m.id]) return;
+    
+    setBunyiCooldown(prev => ({ ...prev, [m.id]: true }));
+    setTimeout(() => setBunyiCooldown(prev => ({ ...prev, [m.id]: false })), 5000);
+    
+    try {
+      const device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [0x1802, 0xFCF1, 0xFFF0, 0xFFE0]
+      });
+      
+      const server = await device.gatt.connect();
+      try {
+        const sv = await server.getPrimaryService(0x1802);
+        const ch = await sv.getCharacteristic(0x2A06);
+        await ch.writeValue(new Uint8Array([2]));
+        setTimeout(async () => { try { await ch.writeValue(new Uint8Array([0])); } catch (e) {} try { server.disconnect(); } catch (e) {} }, 3500);
+      } catch (e) {
+        try { const sv2 = await server.getPrimaryService(0xFFF0);
+          const cs = await sv2.getCharacteristics();
+          const w = cs.find(c => c.properties.write || c.properties.writeWithoutResponse);
+          if (w) { await w.writeValue(new Uint8Array([1])); setTimeout(() => { try { server.disconnect(); } catch (e) {} }, 3500); }
+        } catch (e2) {}
+      }
+    } catch (e) {}
+  };
+
+  // Fungsi untuk cari jamaah
+  const cariJamaah = (m) => {
+    if (!m.punya_gelang || (!m.beacon_id && !m.mac_tag)) return;
+    window.location.hash = '#/radar?cari=' + encodeURIComponent(m.id);
+  };
 
   return (
     <div className="p-3 md:p-5 max-w-3xl mx-auto space-y-4 pb-10">
@@ -46,9 +83,30 @@ export default function JamaahPage() {
                   {m.hp && wa ? ' · ' + tampilkanHp(m.hp) : ''}
                 </small>
               </div>
-              {wa
-                ? <a className="btn bg-[#25D366] text-white !min-h-[48px] !px-4 !text-[13.5px] shrink-0" href={wa} target="_blank" rel="noopener" title={"WhatsApp " + m.nama}>💬 WA</a>
-                : <span className="text-slate-300 text-[12px] font-bold shrink-0" title="No. HP belum diisi (Admin → Kelola Jamaah)">Belum ada HP</span>}
+              <div className="flex gap-1.5 shrink-0">
+                {m.punya_gelang && (m.beacon_id || m.mac_tag) && (
+                  <>
+                    <button 
+                      className="btn btn-emas !min-h-[48px] !px-3 !text-[12px]" 
+                      onClick={() => cariJamaah(m)}
+                      title={"Cari " + m.nama}
+                    >
+                      🔍
+                    </button>
+                    <button 
+                      className={`btn !min-h-[48px] !px-3 !text-[12px] ${bunyiCooldown[m.id] ? 'btn-muda opacity-50' : 'btn-emas'}`}
+                      onClick={() => bunyikanGelang(m)}
+                      disabled={bunyiCooldown[m.id]}
+                      title={"Bunyikan gelang " + m.nama}
+                    >
+                      {bunyiCooldown[m.id] ? '⏳' : '🔊'}
+                    </button>
+                  </>
+                )}
+                {wa
+                  ? <a className="btn bg-[#25D366] text-white !min-h-[48px] !px-4 !text-[13.5px]" href={wa} target="_blank" rel="noopener" title={"WhatsApp " + m.nama}>💬 WA</a>
+                  : <span className="text-slate-300 text-[12px] font-bold" title="No. HP belum diisi (Admin → Kelola Jamaah)">Belum ada HP</span>}
+              </div>
             </div>
           );
         })}
