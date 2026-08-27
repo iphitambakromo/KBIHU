@@ -72,6 +72,8 @@ export default function RadarPage() {
   const getarRef = useRef(null);
   const bunyiRef = useRef(0);
   const [bunyiCooldown, setBunyiCooldown] = useState(0);
+  /* Simpan referensi device untuk menghindari pilih device berulang */
+  const savedDeviceRef = useRef(null);  // referensi device yang sudah dipilih
   /* MAC gotong royong: daftar MAC terdaftar (identitas global) + MAC jamaah yang sedang dipasangkan */
   const [macDaftar, setMacDaftar] = useState([]);
   const [pasangMac, setPasangMac] = useState('');
@@ -234,6 +236,7 @@ export default function RadarPage() {
     // multi-HP: beacon_id kini DAFTAR kode per-HP — cocok bila kode/nama termasuk di dalamnya
     const kodeCari = new Set(String(beaconId || '').split(',').map(s => s.trim()).filter(Boolean));
     try {
+      // Gunakan requestLEScan — izin hanya diminta SEKALI
       cariScanRef.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
       navigator.bluetooth.addEventListener('advertisementreceived', ev => {
         if (!cariRef.current) return;
@@ -248,9 +251,16 @@ export default function RadarPage() {
         setSinyal({ rssi, pct, ...info });
         setCariStatus(info.label);
         navigator.vibrate?.(info.vibrate);
+        
+        // Simpan referensi device
+        savedDeviceRef.current = ev.device;
       });
     } catch (e) {
-      setCariStatus('⚠️ Tidak bisa memindai — pastikan Bluetooth aktif & gunakan Chrome Android');
+      if (e.name === 'NotAllowedError') {
+        setCariStatus('⚠️ Izin Bluetooth ditolak — buka pengaturan browser dan izinkan Bluetooth');
+      } else {
+        setCariStatus('⚠️ Tidak bisa memindai — pastikan Bluetooth aktif & gunakan Chrome Android');
+      }
     }
   };
   const hentiCariScan = () => {
@@ -267,14 +277,23 @@ export default function RadarPage() {
     const cd = setInterval(() => setBunyiCooldown(c => c > 0 ? c - 1 : 0), 1000);
     setTimeout(() => clearInterval(cd), 5000);
     try {
-      setCariStatus('Pilih tag dari daftar — tag bunyi saat tersambung…');
-      const device = await navigator.bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: [0x1802, 0xFCF1, 0xFFF0, 0xFFE0]
-      });
+      let device = savedDeviceRef.current;
+      
+      // Jika belum ada referensi device, minta user pilih
+      if (!device) {
+        setCariStatus('Pilih tag dari daftar — tag bunyi saat tersambung…');
+        device = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [0x1802, 0xFCF1, 0xFFF0, 0xFFE0]
+        });
+        // Simpan referensi device untuk penggunaan berikutnya
+        savedDeviceRef.current = device;
+      }
+      
       // validasi: kalau MAC terdaftar & nama tag unik, harus cocok (nama default "iTag" tak bisa diverifikasi di pemilih)
       if (cari.mac_tag && device.name && !namaDefaultTag(String(device.name).trim()) && normMac(device.name) !== cari.mac_tag) {
         tambahLog(`⚠️ Tag terpilih bukan milik ${cari.nama} — pilih tag bernama <b>${cari.mac_tag}</b>`, true);
+        savedDeviceRef.current = null;  // Reset referensi
         return;
       }
       const server = await device.gatt.connect();
@@ -291,7 +310,10 @@ export default function RadarPage() {
           if (w) { await w.writeValue(new Uint8Array([1])); tambahLog('🔊 Gelang dibunyikan — dekati!'); setTimeout(() => { try { server.disconnect(); } catch (e) {} }, 3500); }
         } catch (e2) {}
       }
-    } catch (e) { setCariStatus('Pembatalan — tidak ada tag dipilih'); }
+    } catch (e) { 
+      savedDeviceRef.current = null;  // Reset referensi jika gagal
+      setCariStatus('Pembatalan — tidak ada tag dipilih'); 
+    }
   };
 
   const selesaiCari = async () => {
@@ -321,6 +343,10 @@ export default function RadarPage() {
     terlapor.current[id] = kini;
     const jm = (mac && macPeta[mac]) || namaMapRef.current[id] || (device.name ? namaMapRef.current[device.name] : undefined);
     tambahLog(jm ? `⏳ Melaporkan <b>${jm.nama}</b>${jm.regu ? ` (${jm.regu})` : ''}…` : `⏳ Melaporkan <b>${device.name || 'tag'}</b>…`);
+    
+    // Simpan referensi device
+    savedDeviceRef.current = device;
+    
     try {
       const r = await fetch('/api/pub/ble', { method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ beaconId: id, macTag: mac || undefined, nama: device.name || '', lat: gps ? gps.lat : undefined, lng: gps ? gps.lng : undefined, oleh: 'gotong-royong', rssi }) });
@@ -334,6 +360,9 @@ export default function RadarPage() {
   async function bunyikan(device) {
     const gagal = (info) => ({ ok: false, info });
     try {
+      // Simpan referensi device
+      savedDeviceRef.current = device;
+      
       const server = await device.gatt.connect();
       const putuskan = () => setTimeout(() => { try { server.disconnect(); } catch (e) {} }, 4000);
       try { const sv = await server.getPrimaryService(0x1802); const ch = await sv.getCharacteristic(0x2A06);
@@ -349,19 +378,33 @@ export default function RadarPage() {
         return gagal('tag tidak punya servis bunyi yang dikenal');
       } catch (e) {}
       return gagal('tag tidak punya servis bunyi yang dikenal');
-    } catch (e) { return gagal('gagal terhubung ke tag'); }
+    } catch (e) { 
+      savedDeviceRef.current = null;  // Reset referensi jika gagal
+      return gagal('gagal terhubung ke tag'); 
+    }
   }
 
   async function pilihTag(untukPasang = false) {
     if (!navigator.bluetooth?.requestDevice) { tambahLog('Butuh Chrome di Android', true); return null; }
     try {
-      const device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [0x1802, 0x180F, 0xFFF0, 0xFFE0] });
+      let device = savedDeviceRef.current;
+      
+      // Jika belum ada referensi device, minta user pilih
+      if (!device) {
+        device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [0x1802, 0x180F, 0xFFF0, 0xFFE0] });
+        // Simpan referensi device
+        savedDeviceRef.current = device;
+      }
+      
       if (untukPasang) return device;
       const bunyi = await bunyikan(device);
       tambahLog(bunyi.ok ? '🔊 Gelang dibunyikan — dekati!' : 'Tag terpilih (perintah bunyi tidak didukung tag ini)');
       await lapor(device, null);
       return device;
-    } catch (e) { return null; }
+    } catch (e) { 
+      savedDeviceRef.current = null;  // Reset referensi jika gagal
+      return null; 
+    }
   }
 
   async function mulaiPindai() {
@@ -369,11 +412,18 @@ export default function RadarPage() {
     if (!navigator.bluetooth.requestLEScan) { tambahLog(`⚠️ ${deteksiBrowser} tidak mendukung scan — buka radar di Chrome Android, atau pakai 📲 Pilih Tag`, true); return; }
     if (scanHandle.current) { scanHandle.current.stop(); scanHandle.current = null; setScanAktif(false); tambahLog('⏹ Dihentikan'); return; }
     try {
+      // Gunakan requestLEScan — izin hanya diminta SEKALI
       scanHandle.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
       setScanAktif(true);
       tambahLog('🟢 Memindai… biarkan layar menyala.');
       navigator.bluetooth.addEventListener('advertisementreceived', ev => lapor(ev.device, ev.rssi, ev));
-    } catch (e) { tambahLog(`⚠️ Gagal memindai (${(e && e.name) || 'gagal'}) — pakai 📲 Pilih Tag Manual`, true); }
+    } catch (e) { 
+      if (e.name === 'NotAllowedError') {
+        tambahLog('⚠️ Izin Bluetooth ditolak — buka pengaturan browser dan izinkan Bluetooth', true);
+      } else {
+        tambahLog(`⚠️ Gagal memindai (${(e && e.name) || 'gagal'}) — pakai 📲 Pilih Tag Manual`, true);
+      }
+    }
   }
 
   /* ===== PASANG OTOMATIS VIA MAC (gotong royong): tag yang MAC-nya cocok = langsung tersimpan ===== */
@@ -394,6 +444,10 @@ export default function RadarPage() {
     const mac = (macNama && macNama === (pasangMacRef.current || '') ? macNama : '') || (macSiarP && macSiarP === (pasangMacRef.current || '') ? macSiarP : '');
     if (!mac) return;
     pasangModeRef.current = false;
+    
+    // Simpan referensi device
+    savedDeviceRef.current = ev.device;
+    
     (async () => {
       const bunyi = await bunyikan(ev.device);
       try { ev.device.gatt.disconnect(); } catch (e) {}
@@ -411,9 +465,17 @@ export default function RadarPage() {
     setPasangInfo('📡 Memindai otomatis — dekatkan gelang ke HP (±1 m). Tag yang MAC-nya cocok langsung tersimpan. Tekan tombol lagi untuk batal.');
     (async () => {
       try {
+        // Gunakan requestLEScan — izin hanya diminta SEKALI
         pasangScanRef.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
         navigator.bluetooth.addEventListener('advertisementreceived', pasangListener);
-      } catch (e) { batalkanPasang(); setPasangInfo('⚠️ Gagal memindai — pastikan Bluetooth aktif'); }
+      } catch (e) { 
+        batalkanPasang(); 
+        if (e.name === 'NotAllowedError') {
+          setPasangInfo('⚠️ Izin Bluetooth ditolak — buka pengaturan browser dan izinkan Bluetooth');
+        } else {
+          setPasangInfo('⚠️ Gagal memindai — pastikan Bluetooth aktif');
+        }
+      }
     })();
   }
   function batalkanPasang() {
@@ -465,6 +527,7 @@ export default function RadarPage() {
     if (!navigator.bluetooth?.requestLEScan) { setPasangInfo(`⚠️ ${deteksiBrowser} tidak mendukung scan sinyal — buka radar ini di Chrome Android. Sementara bisa pakai 📲 Manual.`); return; }
     if (pasangScanRef.current) { hentiPasangSinyal(); setPasangInfo('⏹ Dihentikan'); return; }
     try {
+      // Gunakan requestLEScan — izin hanya diminta SEKALI
       pasangScanRef.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
       navigator.bluetooth.addEventListener('advertisementreceived', pasangHandlerRef.current);
       setPasangScan(true); setDeteksi(0);
@@ -526,6 +589,10 @@ export default function RadarPage() {
     if (!dev || !dev.gatt) { setSinkron('⚠️ Tag ini belum tersedia utk konek — dekati tag lalu biarkan scan menyegarkannya.'); return; }
     setSinkroning(t.mac);
     setSinkron(`🔄 Sinkron "${t.nm || 'tag …' + pendek(t.mac)}" — tag akan konek sebentar & bunyi…`);
+    
+    // Simpan referensi device
+    savedDeviceRef.current = dev;
+    
     const r = await bacaNamaGATT(dev);
     setSinkroning('');
     if (r.err) { setSinkron('⚠️ ' + r.err + ' — coba lagi saat tag lebih dekat.'); return; }
@@ -546,6 +613,10 @@ export default function RadarPage() {
       setSinkron(`🔄 Sinkron ${(i + 1)}/${daftar.length}: "${t.nm || 'tag …' + pendek(t.mac)}" — tag bunyi saat konek…`);
       const dev = t.dev;
       if (!dev || !dev.gatt) { hasil.push({ dulu: t.nm || '…' + pendek(t.mac), kini: 'gagal' }); continue; }
+      
+      // Simpan referensi device
+      savedDeviceRef.current = dev;
+      
       const r = await bacaNamaGATT(dev);
       if (r.err) hasil.push({ dulu: t.nm || '…' + pendek(t.mac), kini: 'gagal' });
       else if (!r.nama) hasil.push({ dulu: t.nm || '…' + pendek(t.mac), kini: 'tanpa nama' });
