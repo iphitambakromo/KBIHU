@@ -41,6 +41,8 @@ export default function KawalPage() {
   const [st, setSt] = useState({});             // jamaahId -> {mode, outDetik, tanpa, rssi}
   const [titik, setTitik] = useState(null);     // titik terakhir semua bersama
   const [pesan, setPesan] = useState('');
+  const [riwayatPosisi, setRiwayatPosisi] = useState([]);  // riwayat GPS
+  const [bgTracking, setBgTracking] = useState(false);     // background tracking aktif
 
   const scanRef = useRef(null), tickRef = useRef(null), wlRef = useRef(null);
   const tagRef = useRef({});                    // kode tag -> {rssi, t, nm, mfrHex}
@@ -48,6 +50,8 @@ export default function KawalPage() {
   const jmRef = useRef([]), pilihRef = useRef(new Set()), ambRef = useRef(-75), bunyiRef = useRef(true);
   const gpsRef = useRef(null), macPetaRef = useRef({});
   const titikLastRef = useRef(0);
+  const riwayatRef = useRef([]);  // riwayat GPS
+  const bgTrackingRef = useRef(false);  // background tracking
 
   useEffect(() => { ambRef.current = ambang; pilihRef.current = pilih; bunyiRef.current = bunyi; }, [ambang, pilih, bunyi]);
   useEffect(() => { try { localStorage.setItem('iphi_kawal_ambang', String(ambang)); } catch (e) {} }, [ambang]);
@@ -70,11 +74,55 @@ export default function KawalPage() {
     try { const t = localStorage.getItem('iphi_kawal_titik'); if (t) setTitik(JSON.parse(t)); } catch (e) {}
   }, []);
 
-  /* GPS ringan — posisinya dipakai utk "titik semua bersama" */
+  /* GPS ringan — posisinya dipakai utk "titik semua bersama" + riwayat pergerakan */
   useEffect(() => {
     if (!navigator.geolocation) return;
-    try { navigator.geolocation.watchPosition(p => { gpsRef.current = { lat: p.coords.latitude, lng: p.coords.longitude }; }, () => {}, { enableHighAccuracy: true, timeout: 20000, maximumAge: 15000 }); } catch (e) {}
+    try { 
+      navigator.geolocation.watchPosition(
+        p => { 
+          gpsRef.current = { lat: p.coords.latitude, lng: p.coords.longitude };
+          // Simpan riwayat posisi (maksimal 1000 titik)
+          const posisi = { 
+            lat: p.coords.latitude, 
+            lng: p.coords.longitude, 
+            akurasi: p.coords.accuracy,
+            waktu: Date.now() 
+          };
+          riwayatRef.current = [...riwayatRef.current.slice(-999), posisi];
+          setRiwayatPosisi(riwayatRef.current);
+        }, 
+        () => {}, 
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 15000 }
+      ); 
+    } catch (e) {}
   }, []);
+
+  /* Background tracking — kirim posisi ke server secara berkala */
+  useEffect(() => {
+    if (!bgTracking) return;
+    
+    const kirimPosisi = async () => {
+      if (!gpsRef.current) return;
+      try {
+        await fetch('/api/pub/posisi', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lat: gpsRef.current.lat,
+            lng: gpsRef.current.lng,
+            waktu: Date.now()
+          })
+        });
+      } catch (e) {}
+    };
+    
+    // Kirim posisi setiap 1 menit
+    const interval = setInterval(kirimPosisi, 60000);
+    // Kirim pertama kali
+    kirimPosisi();
+    
+    return () => clearInterval(interval);
+  }, [bgTracking]);
 
   /* Tag cocok dengan jamaah? (daftar kode per-HP / nama-MAC / MAC payload) */
   const cocokTag = (m, t) => {
@@ -90,6 +138,19 @@ export default function KawalPage() {
   };
 
   const getar = (pola) => { if (bunyiRef.current) { try { navigator.vibrate?.(pola); } catch (e) {} } };
+  
+  /* Push notification */
+  const kirimNotifikasi = async (judul, pesan) => {
+    try {
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification(judul, { 
+          body: pesan, 
+          icon: '/icon-192.png',
+          vibrate: [200, 100, 200]
+        });
+      }
+    } catch (e) {}
+  };
 
   /* Mesin keadaan per jamaah, jalan tiap 1 dtk */
   const tick = () => {
@@ -114,7 +175,7 @@ export default function KawalPage() {
         if (s.mode === 'IN') { if (t.rssi < th) { s.mode = 'TUNGGU'; s.outDetik = 1; } }
         else if (s.mode === 'TUNGGU') {
           if (t.rssi >= th + 5) { s.mode = 'IN'; s.outDetik = 0; getar(getarKembali); if (bunyiRef.current) bip(1, 660); }
-          else { s.outDetik += 1; if (s.outDetik >= 5) { s.mode = 'OUT'; s.lastBuzz = kini; getar(getarKeluar(s.outDetik)); if (bunyiRef.current) bip(1, 880); } }
+          else { s.outDetik += 1; if (s.outDetik >= 5) { s.mode = 'OUT'; s.lastBuzz = kini; getar(getarKeluar(s.outDetik)); if (bunyiRef.current) bip(1, 880); kirimNotifikasi('⚠️ Jamaah Keluar Radius', `${m.nama} di luar radius!`); } }
         }
         else if (s.mode === 'OUT') {
           if (t.rssi >= th + 5) { s.mode = 'IN'; s.outDetik = 0; getar(getarKembali); if (bunyiRef.current) bip(1, 660); }
@@ -126,7 +187,7 @@ export default function KawalPage() {
         }
         else if (s.mode === 'LOST') {
           if (t.rssi >= th) { s.mode = 'IN'; s.outDetik = 0; getar(getarKembali); if (bunyiRef.current) bip(2, 660); }
-          else { s.mode = 'TUNGGU'; s.outDetik = 1; }
+          else { s.mode = 'TUNGGU'; s.outDetik = 1; kirimNotifikasi('❓ Jamaah Hilang Sinyal', `${m.nama} tidak terdeteksi!`); }
         }
         if (s.mode === 'IN') nIN++;
       } else {
@@ -271,6 +332,35 @@ export default function KawalPage() {
           ? <p className="text-[13px] text-slate-700"><b>{relDtk(titik.t)}</b> · {titik.lat.toFixed(5)}, {titik.lng.toFixed(5)} ·{' '}
             <a className="text-hijau font-bold underline" href={`https://www.google.com/maps?q=${titik.lat},${titik.lng}`} target="_blank" rel="noreferrer">lihat di peta</a></p>
           : <p className="text-slate-400 text-[13px]">Belum tercatat — otomatis terekam saat semua dalam radius (butuh GPS).</p>}
+      </div>
+
+      {/* Background Tracking */}
+      <div className="kartu p-4">
+        <h3 className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-2">📡 Background Tracking</h3>
+        <p className="text-[12px] text-slate-500 mb-2">Kirim posisi ke server secara berkala (setiap 1 menit)</p>
+        <button 
+          className={`w-full btn ${bgTracking ? 'btn-merah' : 'btn-utama'} !min-h-[44px]`}
+          onClick={() => {
+            setBgTracking(!bgTracking);
+            bgTrackingRef.current = !bgTracking;
+          }}
+        >
+          {bgTracking ? '⏹ Hentikan Background Tracking' : '▶️ Mulai Background Tracking'}
+        </button>
+        {bgTracking && <p className="text-[11px] text-emerald-600 font-bold mt-1">✅ Aktif — posisi dikirim setiap 1 menit</p>}
+      </div>
+
+      {/* Riwayat Posisi */}
+      <div className="kartu p-4">
+        <h3 className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 mb-2">📍 Riwayat Posisi ({riwayatPosisi.length} titik)</h3>
+        <div className="max-h-[150px] overflow-y-auto space-y-1">
+          {riwayatPosisi.slice(-10).reverse().map((p, i) => (
+            <div key={i} className="text-[11px] text-slate-600 font-mono">
+              {new Date(p.waktu).toLocaleTimeString('id-ID')} · {p.lat.toFixed(5)}, {p.lng.toFixed(5)} · ±{Math.round(p.akurasi)}m
+            </div>
+          ))}
+          {riwayatPosisi.length === 0 && <p className="text-[11px] text-slate-400">Belum ada data</p>}
+        </div>
       </div>
     </div>
   );

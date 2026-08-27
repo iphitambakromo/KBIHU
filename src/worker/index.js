@@ -432,6 +432,25 @@ async function tangani(request, env) {
     return j({ ok: true, jamaah: m.nama, titik: r.titik, absensi });
   }
 
+  /* publik: simpan posisi background tracking */
+  if (path === '/api/pub/posisi' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    if (!Number.isFinite(b.lat) || !Number.isFinite(b.lng)) return j({ ok: false, error: 'koordinat diperlukan' }, 400);
+    
+    // Simpan posisi ke tabel posisi (tanpa jamaah_id, untuk tracking umum)
+    await DB.prepare('INSERT INTO posisi (sesi_id, jamaah_id, lat, lng, akurasi, sumber, waktu) VALUES (?,?,?,?,?,?,?)')
+      .bind('trk1', 'background', b.lat, b.lng, b.akurasi || 20, 'background', nowISO()).run();
+    
+    return j({ ok: true });
+  }
+
+  /* publik: ambil riwayat posisi */
+  if (path === '/api/pub/riwayat-posisi' && method === 'GET') {
+    const limit = Number(url.searchParams.get('limit')) || 100;
+    const rows = (await DB.prepare('SELECT * FROM posisi WHERE jamaah_id=? ORDER BY id DESC LIMIT ?').bind('background', limit).all()).results || [];
+    return j({ ok: true, posisi: rows });
+  }
+
   /* publik: daftar MAC gelang terdaftar — identitas global untuk gotong royong */
   if (path === '/api/pub/mac' && method === 'GET') {
     const rows = (await DB.prepare("SELECT id, nama, regu, mac_tag FROM jamaah WHERE mac_tag IS NOT NULL AND mac_tag != '' ORDER BY nama").all()).results || [];
