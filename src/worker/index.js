@@ -660,6 +660,44 @@ async function tangani(request, env) {
     await DB.prepare('DELETE FROM galat').run();
     return j({ ok: true });
   }
+  
+  /* Hapus semua data kecuali users */
+  if (path === '/api/diag/hapus-semua' && method === 'POST') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const tabel = ['latihan', 'absensi', 'kejadian', 'posisi', 'jamaah', 'titik', 'sesi', 'kalibrasi', 'galat'];
+    let total = 0;
+    for (const t of tabel) {
+      try {
+        const r = await DB.prepare(`DELETE FROM ${t}`).run();
+        total += (r.meta && r.meta.changes) || 0;
+      } catch (e) {}
+    }
+    return j({ ok: true, pesan: `${total} baris data dihapus dari ${tabel.length} tabel (users dipertahankan)` });
+  }
+  
+  /* Hapus satu tabel */
+  if (path === '/api/diag/hapus-tabel' && method === 'POST') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const tabel = String(b.tabel || '');
+    const izin = ['jamaah', 'posisi', 'kejadian', 'absensi', 'absensi_event', 'latihan', 'titik', 'sesi', 'kalibrasi', 'galat', 'regu_ref'];
+    if (!izin.includes(tabel)) return j({ ok: false, error: 'tabel tidak diizinkan' }, 400);
+    const r = await DB.prepare(`DELETE FROM ${tabel}`).run();
+    return j({ ok: true, pesan: `${(r.meta && r.meta.changes) || 0} baris dihapus dari tabel ${tabel}` });
+  }
+  
+  /* Detail tabel */
+  if (path === '/api/diag/detail' && method === 'GET') {
+    if (!USER) return tolak();
+    if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
+    const tabel = url.searchParams.get('tabel') || '';
+    const izin = ['jamaah', 'posisi', 'kejadian', 'absensi', 'absensi_event', 'latihan', 'titik', 'sesi', 'kalibrasi', 'galat', 'regu_ref', 'users', 'token'];
+    if (!izin.includes(tabel)) return j({ ok: false, error: 'tabel tidak diizinkan' }, 400);
+    const rows = (await DB.prepare(`SELECT * FROM ${tabel} ORDER BY rowid DESC LIMIT 100`).all()).results || [];
+    return j({ ok: true, data: rows });
+  }
 
 
   /* ---------- REFERENSI REGU (Pengaturan) ---------- */
