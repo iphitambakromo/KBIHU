@@ -74,6 +74,30 @@ export default function RadarPage() {
   const [bunyiCooldown, setBunyiCooldown] = useState(0);
   /* Simpan referensi device untuk menghindari pilih device berulang */
   const savedDeviceRef = useRef(null);  // referensi device yang sudah dipilih
+  
+  // Fungsi untuk simpan/muat referensi device dari localStorage
+  const simpanDeviceKeStorage = (device) => {
+    try {
+      if (device && device.id) {
+        localStorage.setItem('iphi_saved_device_id', device.id);
+        localStorage.setItem('iphi_saved_device_name', device.name || '');
+      }
+    } catch (e) {}
+  };
+  
+  const muatDeviceDariStorage = async () => {
+    try {
+      const deviceId = localStorage.getItem('iphi_saved_device_id');
+      if (!deviceId) return null;
+      
+      // Coba dapatkan device dari navigator.bluetooth
+      // Catatan: Ini tidak selalu berhasil karena device tidak persisten
+      // Tapi kita bisa gunakan untuk referensi
+      return { id: deviceId, name: localStorage.getItem('iphi_saved_device_name') || '' };
+    } catch (e) {
+      return null;
+    }
+  };
   /* MAC gotong royong: daftar MAC terdaftar (identitas global) + MAC jamaah yang sedang dipasangkan */
   const [macDaftar, setMacDaftar] = useState([]);
   const [pasangMac, setPasangMac] = useState('');
@@ -279,7 +303,27 @@ export default function RadarPage() {
     try {
       let device = savedDeviceRef.current;
       
-      // Jika belum ada referensi device, minta user pilih
+      // Jika belum ada referensi device, coba muat dari localStorage
+      if (!device) {
+        const savedDevice = await muatDeviceDariStorage();
+        if (savedDevice) {
+          // Coba connect ke device yang tersimpan
+          try {
+            const bleDevice = await navigator.bluetooth.requestDevice({
+              filters: [{ services: ['0000ffe0-0000-1000-8000-00805f9b34fb'] }],
+              optionalServices: [0x1802, 0xFCF1, 0xFFF0, 0xFFE0]
+            });
+            device = bleDevice;
+            savedDeviceRef.current = device;
+            simpanDeviceKeStorage(device);
+          } catch (e) {
+            // Jika gagal, minta user pilih
+            device = null;
+          }
+        }
+      }
+      
+      // Jika masih belum ada referensi device, minta user pilih
       if (!device) {
         setCariStatus('Pilih tag dari daftar — tag bunyi saat tersambung…');
         device = await navigator.bluetooth.requestDevice({
@@ -288,6 +332,7 @@ export default function RadarPage() {
         });
         // Simpan referensi device untuk penggunaan berikutnya
         savedDeviceRef.current = device;
+        simpanDeviceKeStorage(device);
       }
       
       // validasi: kalau MAC terdaftar & nama tag unik, harus cocok (nama default "iTag" tak bisa diverifikasi di pemilih)
@@ -346,6 +391,7 @@ export default function RadarPage() {
     
     // Simpan referensi device
     savedDeviceRef.current = device;
+    simpanDeviceKeStorage(device);
     
     try {
       const r = await fetch('/api/pub/ble', { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -362,6 +408,7 @@ export default function RadarPage() {
     try {
       // Simpan referensi device
       savedDeviceRef.current = device;
+      simpanDeviceKeStorage(device);
       
       const server = await device.gatt.connect();
       const putuskan = () => setTimeout(() => { try { server.disconnect(); } catch (e) {} }, 4000);
@@ -389,11 +436,30 @@ export default function RadarPage() {
     try {
       let device = savedDeviceRef.current;
       
-      // Jika belum ada referensi device, minta user pilih
+      // Jika belum ada referensi device, coba muat dari localStorage
+      if (!device) {
+        const savedDevice = await muatDeviceDariStorage();
+        if (savedDevice) {
+          try {
+            const bleDevice = await navigator.bluetooth.requestDevice({
+              filters: [{ services: ['0000ffe0-0000-1000-8000-00805f9b34fb'] }],
+              optionalServices: [0x1802, 0x180F, 0xFFF0, 0xFFE0]
+            });
+            device = bleDevice;
+            savedDeviceRef.current = device;
+            simpanDeviceKeStorage(device);
+          } catch (e) {
+            device = null;
+          }
+        }
+      }
+      
+      // Jika masih belum ada referensi device, minta user pilih
       if (!device) {
         device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [0x1802, 0x180F, 0xFFF0, 0xFFE0] });
         // Simpan referensi device
         savedDeviceRef.current = device;
+        simpanDeviceKeStorage(device);
       }
       
       if (untukPasang) return device;
