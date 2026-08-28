@@ -236,12 +236,11 @@ export default function App() {
           <header className="bg-gradient-to-r from-hijau to-hijau2 text-white flex items-center gap-3 px-3 py-2.5 shadow-lg z-[1200]">
             <button className="w-12 h-12 rounded-xl bg-white/15 border border-white/25 text-xl" onClick={() => setDrawer(true)} aria-label="Menu">☰</button>
             <a href="#/" className="min-w-0 flex-1 -m-1 p-1 flex items-center gap-3" title="Kembali ke Dashboard">
-              <Kabah size={50} />
-              <h1 className="font-extrabold leading-tight text-[22px] shrink-0">IPHI</h1>
-              <div className="flex-1 min-w-0">
-                <p className="text-white/90 text-[11px] leading-snug">Tracking Amanah Mengawal Barisan</p>
-                <p className="text-white/70 text-[10px] leading-snug">Awasi Kendali Rombongan</p>
-                <p className="text-white/70 text-[10px] leading-snug">Optimalisasi Manajemen Operasional</p>
+              <Kabah size={55} />
+              <div className="flex flex-col">
+                <h1 className="font-extrabold leading-none text-[28px]">IPHI</h1>
+                <p className="text-white/90 text-[11px] leading-snug mt-1">Tracking Amanah Mengawal Barisan</p>
+                <p className="text-white/70 text-[10px] leading-snug">Awasi Kendali Rombongan · Optimalisasi Manajemen Operasional</p>
               </div>
             </a>
             <span className="hidden sm:inline-block bg-white/15 border border-white/25 rounded-full px-3 py-1.5 text-[12px] font-bold">
