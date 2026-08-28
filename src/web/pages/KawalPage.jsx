@@ -35,7 +35,7 @@ const relDtk = (t) => { const s = Math.max(0, Math.round((Date.now() - t) / 1000
 export default function KawalPage() {
   const [jmList, setJmList] = useState(null);   // jamaah ber-gelang (sudah di-scope peran oleh worker)
   const [pilih, setPilih] = useState(new Set());
-  const [ambang, setAmbang] = useState(() => { try { const a = parseInt(localStorage.getItem('iphi_kawal_ambang'), 10); if (a >= -100 && a <= -30) return a; } catch (e) {} return -75; }); // ambang radius (dBm)
+  const [ambang, setAmbang] = useState(() => { try { const a = parseInt(localStorage.getItem('iphi_kawal_ambang'), 10); if (a >= -120 && a <= -30) return a; } catch (e) {} return -75; }); // ambang radius (dBm)
   const [bunyi, setBunyi] = useState(true);     // getar + bunyi
   const [aktif, setAktif] = useState(false);
   const [st, setSt] = useState({});             // jamaahId -> {mode, outDetik, tanpa, rssi}
@@ -264,16 +264,16 @@ export default function KawalPage() {
       <div className="kartu p-4 space-y-3">
         <h2 className="text-[13px] font-extrabold uppercase tracking-wide text-hijau">🛡️ Kawal — mengawal rombongan</h2>
         <p className="text-slate-500 text-[12px] leading-snug">
-          Sinyal di bawah ambang = <b>di luar radius</b>. Jarak kira-kira: -40 ≈1m · -55 ≈5m · -65 ≈10m · -75 ≈20m · -85 ≈50m · -95 ≈100m · -100 ≈200-300m.
+          Sinyal di bawah ambang = <b>di luar radius</b>. Jarak kira-kira: -40 ≈1m · -55 ≈5m · -65 ≈10m · -75 ≈20m · -85 ≈50m · -95 ≈100m · -105 ≈200m · -110 ≈300m · -115 ≈400m · -120 ≈500m.
           Setel ambangnya sampai pas untuk barisan jalanmu.
         </p>
         <div>
           <label className="text-[12px] font-bold text-slate-600 flex justify-between">
             <span>Radius ambang</span><span className="font-mono">{ambang} dBm</span>
           </label>
-          <input type="range" min="-100" max="-30" step="1" value={ambang} onChange={e => setAmbang(Number(e.target.value))} className="w-full accent-emerald-700" />
+          <input type="range" min="-120" max="-30" step="1" value={ambang} onChange={e => setAmbang(Number(e.target.value))} className="w-full accent-emerald-700" />
           <div className="flex gap-2 mt-1.5">
-            <button className="btn flex-1 !min-h-[40px] !text-[12.5px]" onClick={() => setAmbang(a => Math.max(-100, a - 5))} aria-label="Radius lebih jauh">−5 · radius jauh</button>
+            <button className="btn flex-1 !min-h-[40px] !text-[12.5px]" onClick={() => setAmbang(a => Math.max(-120, a - 5))} aria-label="Radius lebih jauh">−5 · radius jauh</button>
             <button className="btn flex-1 !min-h-[40px] !text-[12.5px]" onClick={() => setAmbang(a => Math.min(-30, a + 5))} aria-label="Radius lebih dekat">+5 · radius dekat</button>
           </div>
         </div>
