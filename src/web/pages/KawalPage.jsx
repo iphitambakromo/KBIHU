@@ -35,7 +35,7 @@ const relDtk = (t) => { const s = Math.max(0, Math.round((Date.now() - t) / 1000
 export default function KawalPage() {
   const [jmList, setJmList] = useState(null);   // jamaah ber-gelang (sudah di-scope peran oleh worker)
   const [pilih, setPilih] = useState(new Set());
-  const [ambang, setAmbang] = useState(() => { try { const a = parseInt(localStorage.getItem('iphi_kawal_ambang'), 10); if (a >= -90 && a <= -50) return a; } catch (e) {} return -75; }); // ambang radius (dBm)
+  const [ambang, setAmbang] = useState(() => { try { const a = parseInt(localStorage.getItem('iphi_kawal_ambang'), 10); if (a >= -100 && a <= -30) return a; } catch (e) {} return -75; }); // ambang radius (dBm)
   const [bunyi, setBunyi] = useState(true);     // getar + bunyi
   const [aktif, setAktif] = useState(false);
   const [st, setSt] = useState({});             // jamaahId -> {mode, outDetik, tanpa, rssi}
@@ -169,13 +169,13 @@ export default function KawalPage() {
         if (cocokTag(m, { ...e, id })) { if (!t || e.rssi > t.rssi) t = e; }
       }
       const s = { ...(stLama[m.id] || { mode: 'TUNGGU', outDetik: 0, tanpa: 0, lastBuzz: 0, rssi: null }) };
-      const ada = t && (kini - t.t) < 4000;
+      const ada = t && (kini - t.t) < 6000;  // 6 detik toleransi untuk fluktuasi sinyal
       if (ada) {
         s.tanpa = 0; s.rssi = t.rssi;
         if (s.mode === 'IN') { if (t.rssi < th) { s.mode = 'TUNGGU'; s.outDetik = 1; } }
         else if (s.mode === 'TUNGGU') {
           if (t.rssi >= th + 5) { s.mode = 'IN'; s.outDetik = 0; getar(getarKembali); if (bunyiRef.current) bip(1, 660); }
-          else { s.outDetik += 1; if (s.outDetik >= 5) { s.mode = 'OUT'; s.lastBuzz = kini; getar(getarKeluar(s.outDetik)); if (bunyiRef.current) bip(1, 880); kirimNotifikasi('⚠️ Jamaah Keluar Radius', `${m.nama} di luar radius!`); } }
+          else { s.outDetik += 1; if (s.outDetik >= 10) { s.mode = 'OUT'; s.lastBuzz = kini; getar(getarKeluar(s.outDetik)); if (bunyiRef.current) bip(1, 880); kirimNotifikasi('⚠️ Jamaah Keluar Radius', `${m.nama} di luar radius!`); } }
         }
         else if (s.mode === 'OUT') {
           if (t.rssi >= th + 5) { s.mode = 'IN'; s.outDetik = 0; getar(getarKembali); if (bunyiRef.current) bip(1, 660); }
@@ -192,8 +192,8 @@ export default function KawalPage() {
         if (s.mode === 'IN') nIN++;
       } else {
         s.tanpa = (s.tanpa || 0) + 1;
-        if (s.mode === 'IN' && s.tanpa >= 30) s.mode = 'LOST';
-        if ((s.mode === 'TUNGGU' || s.mode === 'OUT') && s.tanpa >= 30) s.mode = 'LOST';
+        if (s.mode === 'IN' && s.tanpa >= 60) s.mode = 'LOST';  // 60 detik tanpa sinyal = LOST
+        if ((s.mode === 'TUNGGU' || s.mode === 'OUT') && s.tanpa >= 60) s.mode = 'LOST';
         if (s.mode === 'OUT' && s.tanpa < 30) {
           s.outDetik += 1;
           if (kini - (s.lastBuzz || 0) >= 8000) { s.lastBuzz = kini; getar(getarKeluar(s.outDetik)); if (bunyiRef.current) bip(3, 880); }
@@ -264,17 +264,17 @@ export default function KawalPage() {
       <div className="kartu p-4 space-y-3">
         <h2 className="text-[13px] font-extrabold uppercase tracking-wide text-hijau">🛡️ Kawal — mengawal rombongan</h2>
         <p className="text-slate-500 text-[12px] leading-snug">
-          Sinyal di bawah ambang = <b>di luar radius</b>. Jarak kira-kira (area terbuka): -55 ≈5 m · -65 ≈10 m · -75 ≈20 m · -85 ≈30–40 m.
+          Sinyal di bawah ambang = <b>di luar radius</b>. Jarak kira-kira: -40 ≈1m · -55 ≈5m · -65 ≈10m · -75 ≈20m · -85 ≈50m · -95 ≈100m · -100 ≈200-300m.
           Setel ambangnya sampai pas untuk barisan jalanmu.
         </p>
         <div>
           <label className="text-[12px] font-bold text-slate-600 flex justify-between">
             <span>Radius ambang</span><span className="font-mono">{ambang} dBm</span>
           </label>
-          <input type="range" min="-90" max="-50" step="1" value={ambang} onChange={e => setAmbang(Number(e.target.value))} className="w-full accent-emerald-700" />
+          <input type="range" min="-100" max="-30" step="1" value={ambang} onChange={e => setAmbang(Number(e.target.value))} className="w-full accent-emerald-700" />
           <div className="flex gap-2 mt-1.5">
-            <button className="btn flex-1 !min-h-[40px] !text-[12.5px]" onClick={() => setAmbang(a => Math.max(-90, a - 5))} aria-label="Radius lebih jauh">−5 · radius jauh</button>
-            <button className="btn flex-1 !min-h-[40px] !text-[12.5px]" onClick={() => setAmbang(a => Math.min(-50, a + 5))} aria-label="Radius lebih dekat">+5 · radius dekat</button>
+            <button className="btn flex-1 !min-h-[40px] !text-[12.5px]" onClick={() => setAmbang(a => Math.max(-100, a - 5))} aria-label="Radius lebih jauh">−5 · radius jauh</button>
+            <button className="btn flex-1 !min-h-[40px] !text-[12.5px]" onClick={() => setAmbang(a => Math.min(-30, a + 5))} aria-label="Radius lebih dekat">+5 · radius dekat</button>
           </div>
         </div>
         <label className="flex items-center gap-2 text-[13px] font-bold text-slate-700">
