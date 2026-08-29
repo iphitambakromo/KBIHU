@@ -23,7 +23,16 @@ export default function AbsensiPage() {
   const muatRekap = useCallback(async (evId) => {
     if (!evId) { setRekap(null); return; }
     const d = await api('/api/absensi/rekap?event=' + encodeURIComponent(evId));
-    if (d.ok) setRekap(d);
+    if (d.ok) {
+      // Bandingkan data baru dengan lama untuk hindari re-render tidak perlu
+      setRekap(prev => {
+        if (!prev) return d;
+        const prevSig = JSON.stringify(prev.rows?.map(r => [r.id, r.status, r.waktu]));
+        const newSig = JSON.stringify(d.rows?.map(r => [r.id, r.status, r.waktu]));
+        if (prevSig === newSig) return prev; // Data sama, tidak perlu update
+        return d;
+      });
+    }
   }, []);
 
   const muatEvents = useCallback(async () => {

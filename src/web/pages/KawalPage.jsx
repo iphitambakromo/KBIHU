@@ -81,7 +81,7 @@ export default function KawalPage() {
   };
 
   const mulai = () => {
-    setAktif(true); setAlerts([]); deteksiRef.current = {};
+    setAktif(true); setAlerts([]); deteksiRef.current = {}; setStatusMap({});
     // Update posisi jamaah dari server setiap 3 detik
     tickRef.current = setInterval(() => {
       const now = Date.now();
@@ -116,14 +116,25 @@ export default function KawalPage() {
 
   const henti = () => {
     setAktif(false);
+    setStatusMap({});
+    setAlerts([]);
     if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
     if (isNativeApp()) stopBLE();
+    // Hapus marker jamaah dari peta
+    Object.values(jamaahMarkersRef.current).forEach(m => { try { mapRef.current?.removeLayer(m); } catch {} });
+    jamaahMarkersRef.current = {};
   };
 
-  const bunyikan = (mac) => {
-    if (!mac) return;
-    if (isNativeApp()) { nativeBunyikan(mac); tampilToast('🔊 Bunyikan gelang...'); }
-    else tampilToast('⚠️ Butuh IPHI App untuk bunyikan gelang', true);
+  // Bunyikan gelang - gunakan MAC atau beacon_id
+  const bunyikan = (m) => {
+    const mac = m.mac_tag || (m.beacon_id ? m.beacon_id.split(',')[0] : '');
+    if (!mac) { tampilToast('⚠️ Jamaah belum punya gelang terdaftar', true); return; }
+    if (isNativeApp()) {
+      nativeBunyikan(mac);
+      tampilToast(`🔊 Bunyikan gelang ${m.nama}...`);
+    } else {
+      tampilToast('⚠️ Butuh IPHI App untuk bunyikan gelang', true);
+    }
   };
 
   const stats = {
@@ -141,9 +152,9 @@ export default function KawalPage() {
         <div ref={petaRef} className="h-[250px] rounded-xl border border-slate-200" />
         <div>
           <label className="text-[12px] font-bold text-slate-600 flex justify-between"><span>Radius</span><span className="font-mono">{radius} m</span></label>
-          <input type="range" min="50" max="500" step="10" value={radius} onChange={e => setRadius(Number(e.target.value))} className="w-full accent-emerald-700" />
+          <input type="range" min="50" max="500" step="10" value={radius} onChange={e => setRadius(Number(e.target.value))} className="w-full accent-emerald-700" disabled={aktif} />
           <div className="flex gap-2 mt-1">
-            {[50, 100, 200, 500].map(r => <button key={r} className={`btn flex-1 !min-h-[34px] !text-[12px] ${radius === r ? 'btn-utama' : 'btn-muda'}`} onClick={() => setRadius(r)}>{r}m</button>)}
+            {[50, 100, 200, 500].map(r => <button key={r} className={`btn flex-1 !min-h-[34px] !text-[12px] ${radius === r ? 'btn-utama' : 'btn-muda'}`} onClick={() => !aktif && setRadius(r)} disabled={aktif}>{r}m</button>)}
           </div>
         </div>
         <div className="grid grid-cols-4 gap-2 text-center">
@@ -174,7 +185,7 @@ export default function KawalPage() {
                 <b className="text-[13.5px] block truncate">{m.nama}</b>
                 <span className={`text-[11px] ${status === 'luar' || status === 'hilang' ? 'text-red-700 font-bold' : 'text-slate-500'}`}>{m.regu ? m.regu + ' · ' : ''}{teksStatus}{jarak != null ? ` · ${jarak} m` : ''}</span>
               </div>
-              <button className="btn btn-muda !min-h-[34px] !px-2.5 !text-[12px]" title="Bunyikan gelang" onClick={() => bunyikan(m.mac_tag)}>🔊</button>
+              <button className="btn btn-muda !min-h-[34px] !px-2.5 !text-[12px]" title="Bunyikan gelang" onClick={() => bunyikan(m)}>🔊</button>
             </div>
           );
         })}
