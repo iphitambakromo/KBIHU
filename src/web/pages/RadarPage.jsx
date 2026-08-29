@@ -187,24 +187,57 @@ export default function RadarPage() {
 
   const tambahLog = (html, warn = false) => setLog(l => [{ html, warn, jam: new Date().toLocaleTimeString('id-ID') }, ...l].slice(0, 40));
 
-  /* GPS + peta kecil */
+  /* GPS + peta kecil — gunakan native GPS jika tersedia */
   useEffect(() => {
-    if (!navigator.geolocation) { setGps({ gagal: true }); return; }
-    navigator.geolocation.getCurrentPosition(p => {
-      const g = { lat: p.coords.latitude, lng: p.coords.longitude, ak: p.coords.accuracy };
-      setGps(g);
-      if (mapRef.current) return;
+    const initMap = (lat, lng, ak) => {
+      if (mapRef.current || !petaRef.current) return;
+      setGps({ lat, lng, ak });
       setTimeout(() => {
         if (!petaRef.current) return;
-        mapRef.current = L.map(petaRef.current, { zoomControl: false }).setView([g.lat, g.lng], 16);
+        mapRef.current = L.map(petaRef.current, { zoomControl: false }).setView([lat, lng], 16);
         L.tileLayer(localStorage.getItem('iphi_peta') === 'satelit'
           ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
           : 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(mapRef.current);
-        L.circle([g.lat, g.lng], { radius: 25, color: '#2A6FDB', weight: 1, fillOpacity: .12 }).addTo(mapRef.current);
-        sayaRef.current = L.circleMarker([g.lat, g.lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#2A6FDB', fillOpacity: 1 }).addTo(mapRef.current);
+        L.circle([lat, lng], { radius: 25, color: '#2A6FDB', weight: 1, fillOpacity: .12 }).addTo(mapRef.current);
+        sayaRef.current = L.circleMarker([lat, lng], { radius: 8, color: '#fff', weight: 3, fillColor: '#2A6FDB', fillOpacity: 1 }).addTo(mapRef.current);
         setTimeout(() => mapRef.current && mapRef.current.invalidateSize(), 200);
       }, 60);
-    }, () => setGps({ gagal: true }), { enableHighAccuracy: true, timeout: 12000 });
+    };
+
+    // Cek native GPS dulu
+    let attempts = 0;
+    const cobaNative = () => {
+      if (window._nativeLat && window._nativeLng && window._nativeLat !== 0) {
+        initMap(window._nativeLat, window._nativeLng, window._nativeAcc || 20);
+        return;
+      }
+      if (window.Android && window.Android.hasGPS && window.Android.hasGPS()) {
+        const lat = window.Android.getLatitude();
+        const lng = window.Android.getLongitude();
+        if (lat !== 0 && lng !== 0) { initMap(lat, lng, 20); return; }
+      }
+      attempts++;
+      if (attempts < 25) setTimeout(cobaNative, 200);
+      else {
+        // Fallback ke browser geolocation
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            p => initMap(p.coords.latitude, p.coords.longitude, p.coords.accuracy),
+            () => setGps({ gagal: true }),
+            { enableHighAccuracy: true, timeout: 12000 }
+          );
+        } else setGps({ gagal: true });
+      }
+    };
+    cobaNative();
+
+    // Update marker dari native GPS callback
+    const updateMarker = (lat, lng) => {
+      if (sayaRef.current) sayaRef.current.setLatLng([lat, lng]);
+      setGps({ lat, lng, ak: 20 });
+    };
+    window._radarGpsUpdate = updateMarker;
+    return () => { window._radarGpsUpdate = null; };
   }, []);
 
   useEffect(() => {
@@ -437,8 +470,9 @@ export default function RadarPage() {
     simpanDeviceKeStorage(device);
     
     try {
+      const gpsPos = window._nativeLat && window._nativeLng ? { lat: window._nativeLat, lng: window._nativeLng } : gps;
       const r = await fetch('/api/pub/ble', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ beaconId: id, macTag: mac || undefined, nama: device.name || '', lat: gps ? gps.lat : undefined, lng: gps ? gps.lng : undefined, oleh: 'gotong-royong', rssi }) });
+        body: JSON.stringify({ beaconId: id, macTag: mac || undefined, nama: device.name || '', lat: gpsPos ? gpsPos.lat : undefined, lng: gpsPos ? gpsPos.lng : undefined, oleh: 'gotong-royong', rssi }) });
       const d = await r.json();
       if (d.ok) tambahLog(`✅ <b>${d.jamaah}</b> tercatat${d.titik ? ' — di ' + d.titik : ''}${labelJarak(rssi) ? ' · ' + labelJarak(rssi) : ''}` +
           (d.absensi?.hadir ? ` · <b>HADIR</b>` : ''));
@@ -535,11 +569,40 @@ export default function RadarPage() {
       const result = startBLE(serverUrl, rombonganId, {
         onDetected: (mac, rssi, name) => {
           console.log('Native BLE detected:', mac, rssi, name);
-          // Update log di UI
+          
+          // Cek throttle (2 menit per device)
+          const kini = Date.now();
+          if (terlapor.current[mac] && kini - terlapor.current[mac] < 120000) return;
+          terlapor.current[mac] = kini;
+          
+          // Cari jamaah dari MAC
           const jm = macPetaRef.current[mac] || namaMapRef.current[mac];
           tambahLog(jm 
-            ? `✅ <b>${jm.nama}</b> terdeteksi (RSSI: ${rssi})` 
-            : `📡 <b>${name || 'iTag'}</b> terdeteksi (MAC: ${mac}, RSSI: ${rssi})`);
+            ? `⏳ Melaporkan <b>${jm.nama}</b>${jm.regu ? ` (${jm.regu})` : ''}…` 
+            : `⏳ Melaporkan <b>${name || 'iTag'}</b>…`);
+          
+          // Kirim ke server
+          const gpsPos = window._nativeLat && window._nativeLng ? { lat: window._nativeLat, lng: window._nativeLng } : null;
+          fetch('/api/pub/ble', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              macTag: mac,
+              nama: name || '',
+              lat: gpsPos?.lat,
+              lng: gpsPos?.lng,
+              oleh: 'native-radar',
+              rssi: rssi
+            })
+          }).then(r => r.json()).then(d => {
+            if (d.ok) {
+              tambahLog(`✅ <b>${d.jamaah}</b> tercatat${d.titik ? ' — di ' + d.titik : ''}${d.absensi?.hadir ? ' · <b>HADIR</b>' : ''}`);
+            } else {
+              tambahLog(`⚠️ ${name || 'iTag'} tidak terdaftar — tambah MAC di Kelola Jamaah`, true);
+            }
+          }).catch(e => {
+            tambahLog('❌ Gagal kirim — periksa internet', true);
+          });
         },
         onStatus: (status) => {
           console.log('Native BLE status:', status);
