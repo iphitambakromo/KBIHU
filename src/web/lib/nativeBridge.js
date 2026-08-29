@@ -173,6 +173,62 @@ export const bunyikanGelang = (mac) => {
 };
 
 /**
+ * Scan iTag untuk mendapatkan MAC asli
+ * @returns {Promise<{mac: string, deviceId: string} | null>}
+ */
+export const scanITag = async () => {
+  if (isNativeApp()) {
+    // Native: gunakan BLE scanner untuk deteksi iTag
+    // Return promise yang resolve saat iTag terdeteksi
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => resolve(null), 30000); // timeout 30 detik
+      
+      // Setup callback untuk terima hasil scan
+      window._scanITagCallback = (mac, deviceId) => {
+        clearTimeout(timeout);
+        window._scanITagCallback = null;
+        resolve({ mac, deviceId });
+      };
+      
+      // Panggil native untuk mulai scan
+      if (window.Android.scanITag) {
+        window.Android.scanITag();
+      } else {
+        // Fallback: gunakan BLE scan yang sudah ada
+        resolve(null);
+      }
+    });
+  }
+  
+  // Browser: gunakan Web Bluetooth
+  try {
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: 'iTAG' }],
+      optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb']
+    }).catch(() => {
+      return navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb']
+      });
+    });
+    
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
+    const characteristic = await service.getCharacteristic('0000ffe3-0000-1000-8000-00805f9b34fb');
+    const value = await characteristic.readValue();
+    
+    const macBytes = new Uint8Array(value.buffer);
+    const mac = Array.from(macBytes).map(b => b.toString(16).padStart(2, '0')).join(':').toUpperCase();
+    
+    server.disconnect();
+    return { mac, deviceId: device.id };
+  } catch (e) {
+    console.error('Scan iTag error:', e);
+    return null;
+  }
+};
+
+/**
  * Stop bunyikan gelang
  * @param {string} mac - MAC address gelang
  */

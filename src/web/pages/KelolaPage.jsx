@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { normMac } from '../../lib/mac.js';
 import { useApp } from '../App.jsx';
+import { isNativeApp, scanITag } from '../lib/nativeBridge.js';
 
 const KOSONG = { id: null, nama: '', paspor: '', hp: '', umur: '', regu: '', hotel: '', punya_hp: true, punya_gelang: false, beacon_id: '', mac_tag: '', catatan: '', foto: '' };
 
@@ -159,43 +160,25 @@ export default function KelolaPage() {
                   type="button"
                   className="btn btn-utama !min-h-[38px] !px-3 !text-[12px]"
                   onClick={async () => {
-                    if (!navigator.bluetooth) {
-                      tampilToast('⚠️ Browser tidak mendukung Bluetooth', true);
-                      return;
-                    }
                     try {
                       tampilToast('📡 Memindai iTag...');
-                      // Filter device berdasarkan nama "iTAG" untuk mengurangi kebingungan
-                      const device = await navigator.bluetooth.requestDevice({
-                        filters: [
-                          { namePrefix: 'iTAG' },  // Hanya tampilkan device bernama iTAG
-                        ],
-                        optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb']
-                      }).catch(() => {
-                        // Jika filter gagal, gunakan acceptAllDevices
-                        return navigator.bluetooth.requestDevice({
-                          acceptAllDevices: true,
-                          optionalServices: ['0000ffe0-0000-1000-8000-00805f9b34fb']
-                        });
-                      });
                       
-                      tampilToast('🔗 Menghubungkan ke iTag...');
-                      const server = await device.gatt.connect();
-                      const service = await server.getPrimaryService('0000ffe0-0000-1000-8000-00805f9b34fb');
-                      const characteristic = await service.getCharacteristic('0000ffe3-0000-1000-8000-00805f9b34fb');
-                      const value = await characteristic.readValue();
+                      // Gunakan native bridge atau Web Bluetooth
+                      const result = await scanITag();
                       
-                      // Konversi ke MAC address
-                      const macBytes = new Uint8Array(value.buffer);
-                      const mac = Array.from(macBytes).map(b => b.toString(16).padStart(2, '0')).join(':').toUpperCase();
+                      if (!result) {
+                        tampilToast('❌ Gagal memindai atau dibatalkan', true);
+                        return;
+                      }
                       
-                      // Update input field MAC (hanya jika belum ada)
+                      const { mac, deviceId } = result;
+                      
+                      // Update input field MAC
                       if (macRef.current && !macRef.current.value) {
                         macRef.current.value = mac;
                       }
                       
                       // Simpan device.id ke beacon_id (tambahkan, jangan timpa)
-                      const deviceId = device.id;
                       const beaconSekarang = form.beacon_id || '';
                       const beaconBaru = beaconSekarang 
                         ? beaconSekarang + ',' + deviceId 
@@ -203,7 +186,6 @@ export default function KelolaPage() {
                       
                       setForm(f => ({ ...f, beacon_id: beaconBaru }));
                       
-                      server.disconnect();
                       tampilToast(`✅ MAC: ${mac} | Device ID: ${deviceId.slice(-8)} ditambahkan`);
                     } catch (error) {
                       tampilToast(`❌ Error: ${error.message}`, true);

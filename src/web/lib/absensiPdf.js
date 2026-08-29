@@ -95,6 +95,28 @@ export function pdfAbsensi(rekap) {
   doc.text('(ttd & nama jelas)', x1 + 12, y + 28.5);
   doc.text('(ttd & nama jelas)', x2 + 12, y + 28.5);
 
-  doc.save('absensi-' + String(ev.nama || 'laporan').replace(/[^\w\d-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) + '.pdf');
+  /* ---- simpan PDF ---- */
+  const fileName = 'absensi-' + String(ev.nama || 'laporan').replace(/[^\w\d-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) + '.pdf';
+  
+  // Cek apakah di WebView (native app)
+  const isWebView = typeof window !== 'undefined' && typeof window.Android !== 'undefined';
+  
+  if (isWebView) {
+    // WebView: buka PDF di tab baru atau download via data URL
+    try {
+      const pdfBlob = doc.output('blob');
+      const pdfUrl = URL.createObjectURL(pdfBlob);
+      window.open(pdfUrl, '_blank');
+      // Cleanup setelah 1 menit
+      setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000);
+    } catch (e) {
+      // Fallback: download langsung
+      doc.save(fileName);
+    }
+  } else {
+    // Browser biasa: download langsung
+    doc.save(fileName);
+  }
+  
   return doc;
 }
