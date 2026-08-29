@@ -97,6 +97,8 @@ class MainActivity : AppCompatActivity() {
             setSupportZoom(true)
             builtInZoomControls = true
             displayZoomControls = false
+            // GPS support
+            setGeolocationEnabled(true)
         }
 
         webView.webViewClient = object : WebViewClient() {
