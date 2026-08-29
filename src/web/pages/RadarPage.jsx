@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import { normMac } from '../../lib/mac.js';
 import { bytesToHex, ekstrakMacSiar, mfrHexDari, namaDefaultTag } from '../../lib/ble.js';
+import { isNativeApp, startBLE, stopBLE, bunyikanGelang as nativeBunyikan, openWhatsApp, vibrate, getEnvironmentInfo } from '../lib/nativeBridge.js';
 
 /* Deteksi browser utk pesan panduan (scan BLE cuma ada di Chrome Android) */
 const deteksiBrowser = (() => {
@@ -256,18 +257,47 @@ export default function RadarPage() {
   };
 
   const mulaiCariScan = async (beaconId, macTag) => {
-    if (!navigator.bluetooth) { setCariStatus('⚠️ Browser tidak mendukung bluetooth — gunakan Chrome Android'); return; }
+    // Mode Native: gunakan native bridge
+    if (isNativeApp()) {
+      const serverUrl = localStorage.getItem('iphi_server_url') || 'https://kbihu.iphi-haji.workers.dev';
+      const rombonganId = localStorage.getItem('iphi_rombongan') || '';
+      
+      startBLE(serverUrl, rombonganId, {
+        onDetected: (mac, rssi, name) => {
+          if (!cariRef.current) return;
+          
+          // Cek apakah ini jamaah yang dicari
+          const kodeCari = new Set(String(beaconId || '').split(',').map(s => s.trim()).filter(Boolean));
+          const cocok = kodeCari.has(mac) || (macTag && mac === macTag);
+          
+          if (cocok) {
+            const pct = rssiKePct(rssi);
+            const info = rssiKeLabel(rssi);
+            setSinyal({ rssi, pct, ...info });
+            setCariStatus(info.label);
+            vibrate(info.vibrate.join(','));
+          }
+        },
+        onStatus: (status) => {
+          console.log('Cari scan status:', status);
+        }
+      });
+      
+      setCariStatus('🔵 JAUH — mulai berjalan perlahan ke segala arah');
+      return;
+    }
+    
+    // Mode Browser: gunakan Web Bluetooth
+    if (!navigator.bluetooth) { setCariStatus('⚠️ Browser tidak mendukung bluetooth — gunakan IPHI App'); return; }
     // multi-HP: beacon_id kini DAFTAR kode per-HP — cocok bila kode/nama termasuk di dalamnya
     const kodeCari = new Set(String(beaconId || '').split(',').map(s => s.trim()).filter(Boolean));
     try {
-      // Gunakan requestLEScan — izin hanya diminta SEKALI
       cariScanRef.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
       navigator.bluetooth.addEventListener('advertisementreceived', ev => {
         if (!cariRef.current) return;
         const id = ev.device.id || ev.device.name;
         const nm = normMac(ev.device?.name);
         const macSiarP = ekstrakMacSiar(mfrHexDari(ev), macPetaRef.current, false);
-        // cocok: ID perangkat lokal (daftar multi-HP), nama siaran (pasang lama), atau MAC global (nama / payload siar)
         if (!kodeCari.has(id) && !kodeCari.has(String(ev.device.name || '')) && !(macTag && (nm === macTag || macSiarP === macTag))) return;
         const rssi = ev.rssi || -100;
         const pct = rssiKePct(rssi);
@@ -275,21 +305,23 @@ export default function RadarPage() {
         setSinyal({ rssi, pct, ...info });
         setCariStatus(info.label);
         navigator.vibrate?.(info.vibrate);
-        
-        // Simpan referensi device
         savedDeviceRef.current = ev.device;
       });
     } catch (e) {
       if (e.name === 'NotAllowedError') {
         setCariStatus('⚠️ Izin Bluetooth ditolak — buka pengaturan browser dan izinkan Bluetooth');
       } else {
-        setCariStatus('⚠️ Tidak bisa memindai — pastikan Bluetooth aktif & gunakan Chrome Android');
+        setCariStatus('⚠️ Tidak bisa memindai — pastikan Bluetooth aktif & gunakan IPHI App');
       }
     }
   };
   const hentiCariScan = () => {
-    try { cariScanRef.current?.stop(); } catch (e) {}
-    cariScanRef.current = null;
+    if (isNativeApp()) {
+      stopBLE();
+    } else {
+      try { cariScanRef.current?.stop(); } catch (e) {}
+      cariScanRef.current = null;
+    }
     navigator.vibrate?.(0);
   };
 
@@ -300,6 +332,17 @@ export default function RadarPage() {
     setBunyiCooldown(5);
     const cd = setInterval(() => setBunyiCooldown(c => c > 0 ? c - 1 : 0), 1000);
     setTimeout(() => clearInterval(cd), 5000);
+    
+    // Mode Native: gunakan native bridge
+    if (isNativeApp()) {
+      const mac = cari.mac_tag || cari.beacon_id;
+      if (mac) {
+        nativeBunyikan(mac);
+        tambahLog('🔊 Gelang dibunyikan via Native App — dekati!');
+        return;
+      }
+    }
+    
     try {
       let device = savedDeviceRef.current;
       
@@ -364,7 +407,7 @@ export default function RadarPage() {
   const selesaiCari = async () => {
     if (!cari) return;
     hentiCariScan();
-    navigator.vibrate?.([800]);
+    vibrate('800');
     try {
       const pos = await new Promise(res => navigator.geolocation.getCurrentPosition(p => res({ lat: p.coords.latitude, lng: p.coords.longitude }), () => res(null), { enableHighAccuracy: true, timeout: 8000 }));
       const r = await fetch('/api/pub/cari-selesai', { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -474,11 +517,54 @@ export default function RadarPage() {
   }
 
   async function mulaiPindai() {
-    if (!navigator.bluetooth) { tambahLog('Gunakan Chrome Android', true); return; }
-    if (!navigator.bluetooth.requestLEScan) { tambahLog(`⚠️ ${deteksiBrowser} tidak mendukung scan — buka radar di Chrome Android, atau pakai 📲 Pilih Tag`, true); return; }
+    const env = getEnvironmentInfo();
+    
+    if (env.isNative) {
+      // Mode Native: gunakan Android bridge
+      if (scanHandle.current) {
+        stopBLE();
+        scanHandle.current = null;
+        setScanAktif(false);
+        tambahLog('⏹ Dihentikan');
+        return;
+      }
+      
+      const serverUrl = localStorage.getItem('iphi_server_url') || 'https://kbihu.iphi-haji.workers.dev';
+      const rombonganId = localStorage.getItem('iphi_rombongan') || '';
+      
+      const result = startBLE(serverUrl, rombonganId, {
+        onDetected: (mac, rssi, name) => {
+          console.log('Native BLE detected:', mac, rssi, name);
+          // Update log di UI
+          const jm = macPetaRef.current[mac] || namaMapRef.current[mac];
+          tambahLog(jm 
+            ? `✅ <b>${jm.nama}</b> terdeteksi (RSSI: ${rssi})` 
+            : `📡 <b>${name || 'iTag'}</b> terdeteksi (MAC: ${mac}, RSSI: ${rssi})`);
+        },
+        onStatus: (status) => {
+          console.log('Native BLE status:', status);
+          tambahLog(status);
+        }
+      });
+      
+      if (result.ok) {
+        scanHandle.current = 'native'; // Marker bahwa native scan aktif
+        setScanAktif(true);
+        tambahLog('🟢 Scan aktif via Native App — MAC asli dibaca dari ffe3');
+      } else {
+        tambahLog(`⚠️ ${result.error}`, true);
+      }
+      return;
+    }
+    
+    // Mode Browser: gunakan Web Bluetooth
+    if (!navigator.bluetooth) { tambahLog('Gunakan Chrome Android atau IPHI App', true); return; }
+    if (!navigator.bluetooth.requestLEScan) { 
+      tambahLog(`⚠️ ${deteksiBrowser} tidak mendukung scan BLE. Gunakan <b>IPHI App</b> untuk scan otomatis.`, true); 
+      return; 
+    }
     if (scanHandle.current) { scanHandle.current.stop(); scanHandle.current = null; setScanAktif(false); tambahLog('⏹ Dihentikan'); return; }
     try {
-      // Gunakan requestLEScan — izin hanya diminta SEKALI
       scanHandle.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
       setScanAktif(true);
       tambahLog('🟢 Memindai… biarkan layar menyala.');
@@ -709,10 +795,17 @@ export default function RadarPage() {
         <p className="text-white/85 text-[12px] mt-1">Deteksi gelang jamaah ±25 m — tercatat ke dashboard & absensi.</p>
       </div>
 
-      {!navigator.bluetooth?.requestLEScan && (
+      {!isNativeApp() && !navigator.bluetooth?.requestLEScan && (
         <div className="mt-3 bg-amber-50 border-2 border-amber-300 rounded-2xl p-3">
           <b className="text-amber-700 text-[13px]">⚠️ {deteksiBrowser} tidak mendukung scan Bluetooth.</b>
-          <p className="text-[12px] text-slate-600 mt-1">Pindai Otomatis & Pasang via Sinyal hanya jalan di <b>Chrome Android</b>. Di browser ini tetap bisa: 📲 pasang manual & 📲 pilih tag manual.</p>
+          <p className="text-[12px] text-slate-600 mt-1">Untuk scan otomatis, gunakan <b>IPHI App</b> (native). Di browser tetap bisa: 📲 pasang manual & 📲 pilih tag manual.</p>
+        </div>
+      )}
+      
+      {isNativeApp() && (
+        <div className="mt-3 bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-3">
+          <b className="text-emerald-700 text-[13px]">✅ Mode Native App</b>
+          <p className="text-[12px] text-slate-600 mt-1">BLE scan menggunakan native Android API — MAC asli dibaca dari ffe3, background service aktif.</p>
         </div>
       )}
 
