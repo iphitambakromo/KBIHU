@@ -83,8 +83,62 @@ CREATE TABLE IF NOT EXISTS latihan (                  -- catatan odometer latiha
   selesai INTEGER DEFAULT 0, waktu TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS token (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, waktu TEXT NOT NULL, expires TEXT NOT NULL);
+
+-- ===== v2.0: Tabel untuk Native App & Kawal Rombongan =====
+
+CREATE TABLE IF NOT EXISTS deteksi (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mac_tag TEXT NOT NULL,
+  jamaah_id TEXT,
+  device_id TEXT,
+  lat REAL,
+  lng REAL,
+  rssi INTEGER,
+  sumber TEXT DEFAULT 'native',
+  waktu TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS kawal_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rombongan_id TEXT NOT NULL,
+  ketua_device TEXT,
+  lat REAL,
+  lng REAL,
+  jumlah_deteksi INTEGER DEFAULT 0,
+  waktu TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS kawal_jamaah (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rombongan_id TEXT NOT NULL,
+  jamaah_id TEXT NOT NULL,
+  mac_tag TEXT,
+  status TEXT DEFAULT 'tidak_terdeteksi',
+  rssi INTEGER,
+  jarak_meter REAL,
+  terakhir_terdeteksi TEXT,
+  waktu TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS kawal_alert (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  rombongan_id TEXT NOT NULL,
+  jamaah_id TEXT NOT NULL,
+  tipe TEXT DEFAULT 'hilang',
+  durasi_menit INTEGER,
+  lat REAL,
+  lng REAL,
+  ditangani INTEGER DEFAULT 0,
+  waktu TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_posisi_jm ON posisi(jamaah_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_kejadian ON kejadian(id DESC);
 CREATE INDEX IF NOT EXISTS idx_titik ON titik(sesi_id);
 CREATE INDEX IF NOT EXISTS idx_absensi_ev ON absensi(event_id);
 CREATE INDEX IF NOT EXISTS idx_latihan_jm ON latihan(jamaah_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_deteksi_mac ON deteksi(mac_tag, waktu);
+CREATE INDEX IF NOT EXISTS idx_deteksi_jm ON deteksi(jamaah_id, waktu);
+CREATE INDEX IF NOT EXISTS idx_kawal_log ON kawal_log(rombongan_id, waktu);
+CREATE INDEX IF NOT EXISTS idx_kawal_jm ON kawal_jamaah(rombongan_id, jamaah_id);
+CREATE INDEX IF NOT EXISTS idx_kawal_alert ON kawal_alert(rombongan_id, ditangani);

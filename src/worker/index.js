@@ -649,7 +649,7 @@ async function tangani(request, env) {
     if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
     const galat = (await DB.prepare('SELECT * FROM galat ORDER BY id DESC LIMIT 50').all()).results || [];
     const stat = {};
-    for (const t of ['jamaah', 'titik', 'posisi', 'kejadian', 'absensi_event', 'latihan', 'users']) {
+    for (const t of ['jamaah', 'titik', 'posisi', 'kejadian', 'absensi_event', 'latihan', 'deteksi', 'kawal_log', 'kawal_jamaah', 'users']) {
       stat[t] = (await DB.prepare(`SELECT COUNT(*) c FROM ${t}`).first()).c;
     }
     return j({ ok: true, galat, stat });
@@ -665,7 +665,7 @@ async function tangani(request, env) {
   if (path === '/api/diag/hapus-semua' && method === 'POST') {
     if (!USER) return tolak();
     if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
-    const tabel = ['latihan', 'absensi', 'kejadian', 'posisi', 'jamaah', 'titik', 'sesi', 'kalibrasi', 'galat'];
+    const tabel = ['latihan', 'absensi', 'kejadian', 'posisi', 'deteksi', 'kawal_log', 'kawal_jamaah', 'kawal_alert', 'jamaah', 'titik', 'sesi', 'kalibrasi', 'galat'];
     let total = 0;
     for (const t of tabel) {
       try {
@@ -682,7 +682,7 @@ async function tangani(request, env) {
     if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
     const b = await request.json().catch(() => ({}));
     const tabel = String(b.tabel || '');
-    const izin = ['jamaah', 'posisi', 'kejadian', 'absensi', 'absensi_event', 'latihan', 'titik', 'sesi', 'kalibrasi', 'galat', 'regu_ref'];
+    const izin = ['jamaah', 'posisi', 'kejadian', 'absensi', 'absensi_event', 'latihan', 'deteksi', 'kawal_log', 'kawal_jamaah', 'kawal_alert', 'titik', 'sesi', 'kalibrasi', 'galat', 'regu_ref'];
     if (!izin.includes(tabel)) return j({ ok: false, error: 'tabel tidak diizinkan' }, 400);
     const r = await DB.prepare(`DELETE FROM ${tabel}`).run();
     return j({ ok: true, pesan: `${(r.meta && r.meta.changes) || 0} baris dihapus dari tabel ${tabel}` });
@@ -693,7 +693,7 @@ async function tangani(request, env) {
     if (!USER) return tolak();
     if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
     const tabel = url.searchParams.get('tabel') || '';
-    const izin = ['jamaah', 'posisi', 'kejadian', 'absensi', 'absensi_event', 'latihan', 'titik', 'sesi', 'kalibrasi', 'galat', 'regu_ref', 'users', 'token'];
+    const izin = ['jamaah', 'posisi', 'kejadian', 'absensi', 'absensi_event', 'latihan', 'deteksi', 'kawal_log', 'kawal_jamaah', 'kawal_alert', 'titik', 'sesi', 'kalibrasi', 'galat', 'regu_ref', 'users', 'token'];
     if (!izin.includes(tabel)) return j({ ok: false, error: 'tabel tidak diizinkan' }, 400);
     const rows = (await DB.prepare(`SELECT * FROM ${tabel} ORDER BY rowid DESC LIMIT 100`).all()).results || [];
     return j({ ok: true, data: rows });
@@ -798,6 +798,191 @@ async function tangani(request, env) {
     await DB.prepare('INSERT INTO kejadian (sesi_id, jamaah_id, tipe, zona_titik, keterangan, waktu) VALUES (?,?,?,?,?,?)')
       .bind(sesi.id, m.id, 'ditemukan', null, `🎯 ${m.nama} DITEMUKAN oleh ${String(b.oleh || 'pencari').slice(0, 40)} via Mode Cari`, nowISO()).run();
     return j({ ok: true, jamaah: m.nama });
+  }
+
+  /* ===== v2.0: ENDPOINT UNTUK NATIVE APP & KAWAL ROMBONGAN ===== */
+
+  /* POST /api/pub/deteksi — Native app kirim data deteksi iTag
+     Setiap kali native app mendeteksi iTag via BLE, kirim data ke sini.
+     Server akan: simpan ke tabel deteksi, cocokkan dengan jamaah, update posisi, cek absensi. */
+  if (path === '/api/pub/deteksi' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const mac = normMac(b.mac_tag);
+    if (!mac) return j({ ok: false, error: 'mac_tag wajib' }, 400);
+    
+    // Cari jamaah berdasarkan MAC
+    const jm = await DB.prepare('SELECT * FROM jamaah WHERE mac_tag=?').bind(mac).first();
+    const jamaahId = jm ? jm.id : null;
+    
+    // Simpan ke tabel deteksi
+    await DB.prepare('INSERT INTO deteksi (mac_tag, jamaah_id, device_id, lat, lng, rssi, sumber, waktu) VALUES (?,?,?,?,?,?,?,?)')
+      .bind(mac, jamaahId, b.device_id || '', b.lat || null, b.lng || null, b.rssi || null, b.sumber || 'native', nowISO()).run();
+    
+    // Jika jamaah ditemukan, update posisi & cek absensi
+    if (jm && Number.isFinite(b.lat) && Number.isFinite(b.lng)) {
+      await catatPosisi(DB, jm.id, b.lat, b.lng, 'native');
+      
+      // Cek absensi aktif
+      const ev = await DB.prepare('SELECT * FROM absensi_event WHERE ditutup=0 ORDER BY waktu DESC LIMIT 1').first();
+      if (ev) {
+        const tt = await DB.prepare('SELECT * FROM titik WHERE id=?').bind(ev.titik_id || '').first();
+        if (tt) {
+          const d = jarakM(b.lat, b.lng, tt.lat, tt.lng);
+          if (d <= tt.radius) {
+            await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, lat, lng, waktu, oleh) VALUES (?,?,?,?,?,?,?,?)')
+              .bind(ev.id, jm.id, 'hadir', 'native', b.lat, b.lng, nowISO(), 'native-app').run();
+          }
+        }
+      }
+    }
+    
+    return j({ ok: true, jamaah: jm ? jm.nama : null, jamaah_id: jamaahId });
+  }
+
+  /* POST /api/pub/kawal — Native app kirim data kawal rombongan
+     Setiap 30 detik, native app mengirim posisi ketua + daftar jamaah terdeteksi. */
+  if (path === '/api/pub/kawal' && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const rombonganId = String(b.rombongan_id || '').trim();
+    if (!rombonganId) return j({ ok: false, error: 'rombongan_id wajib' }, 400);
+    
+    // Simpan log posisi rombongan
+    await DB.prepare('INSERT INTO kawal_log (rombongan_id, ketua_device, lat, lng, jumlah_deteksi, waktu) VALUES (?,?,?,?,?,?)')
+      .bind(rombonganId, b.device_id || '', b.lat || null, b.lng || null, (b.deteksi || []).length, nowISO()).run();
+    
+    // Update status tiap jamaah
+    const deteksiList = b.deteksi || [];
+    const macTerdeteksi = new Set();
+    
+    for (const d of deteksiList) {
+      const mac = normMac(d.mac);
+      if (!mac) continue;
+      macTerdeteksi.add(mac);
+      
+      const jm = await DB.prepare('SELECT * FROM jamaah WHERE mac_tag=?').bind(mac).first();
+      if (!jm) continue;
+      
+      // Hitung jarak dari RSSI (estimasi: RSSI -50 = 1m, -70 = 10m, -90 = 100m)
+      const jarak = Math.round(Math.pow(10, (-50 - (d.rssi || -70)) / 20));
+      
+      // Upsert status jamaah
+      const existing = await DB.prepare('SELECT id FROM kawal_jamaah WHERE rombongan_id=? AND jamaah_id=?')
+        .bind(rombonganId, jm.id).first();
+      
+      if (existing) {
+        await DB.prepare('UPDATE kawal_jamaah SET status=?, rssi=?, jarak_meter=?, terakhir_terdeteksi=?, waktu=? WHERE id=?')
+          .bind('terdeteksi', d.rssi || null, jarak, nowISO(), nowISO(), existing.id).run();
+      } else {
+        await DB.prepare('INSERT INTO kawal_jamaah (rombongan_id, jamaah_id, mac_tag, status, rssi, jarak_meter, terakhir_terdeteksi, waktu) VALUES (?,?,?,?,?,?,?,?)')
+          .bind(rombonganId, jm.id, mac, 'terdeteksi', d.rssi || null, jarak, nowISO(), nowISO()).run();
+      }
+      
+      // Update posisi jamaah
+      if (Number.isFinite(b.lat) && Number.isFinite(b.lng)) {
+        await catatPosisi(DB, jm.id, b.lat, b.lng, 'kawal');
+      }
+    }
+    
+    // Update jamaah yang TIDAK terdeteksi
+    const semuaJamaahRegu = await DB.prepare('SELECT j.* FROM jamaah j WHERE j.regu=?')
+      .bind(rombonganId.replace('regu-', '')).all();
+    
+    for (const jm of (semuaJamaahRegu.results || [])) {
+      if (jm.mac_tag && !macTerdeteksi.has(jm.mac_tag)) {
+        const existing = await DB.prepare('SELECT id, terakhir_terdeteksi FROM kawal_jamaah WHERE rombongan_id=? AND jamaah_id=?')
+          .bind(rombonganId, jm.id).first();
+        
+        if (existing) {
+          await DB.prepare('UPDATE kawal_jamaah SET status=?, waktu=? WHERE id=?')
+            .bind('tidak_terdeteksi', nowISO(), existing.id).run();
+          
+          // Cek apakah sudah hilang > 5 menit
+          if (existing.terakhir_terdeteksi) {
+            const menitLalu = (Date.now() - new Date(existing.terakhir_terdeteksi).getTime()) / 60000;
+            if (menitLalu > 5) {
+              const sudahAdaAlert = await DB.prepare('SELECT id FROM kawal_alert WHERE rombongan_id=? AND jamaah_id=? AND ditangani=0')
+                .bind(rombonganId, jm.id).first();
+              if (!sudahAdaAlert) {
+                await DB.prepare('INSERT INTO kawal_alert (rombongan_id, jamaah_id, tipe, durasi_menit, lat, lng, waktu) VALUES (?,?,?,?,?,?,?)')
+                  .bind(rombonganId, jm.id, 'hilang', Math.round(menitLalu), b.lat || null, b.lng || null, nowISO()).run();
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    return j({ ok: true, terdeteksi: deteksiList.length });
+  }
+
+  /* GET /api/pub/kawal-status?rombongan=regu-1 — Web app ambil status kawal */
+  if (path === '/api/pub/kawal-status' && method === 'GET') {
+    const rombonganId = url.searchParams.get('rombongan') || '';
+    if (!rombonganId) return j({ ok: false, error: 'parameter rombongan wajib' }, 400);
+    
+    // Ambil posisi terakhir rombongan
+    const logTerbaru = await DB.prepare('SELECT * FROM kawal_log WHERE rombongan_id=? ORDER BY id DESC LIMIT 1')
+      .bind(rombonganId).first();
+    
+    // Ambil status jamaah
+    const jamaah = (await DB.prepare('SELECT k.*, j.nama, j.regu FROM kawal_jamaah k LEFT JOIN jamaah j ON j.id=k.jamaah_id WHERE k.rombongan_id=? ORDER BY j.nama')
+      .bind(rombonganId).all()).results || [];
+    
+    // Ambil alert aktif
+    const alert = (await DB.prepare('SELECT a.*, j.nama FROM kawal_alert a LEFT JOIN jamaah j ON j.id=a.jamaah_id WHERE a.rombongan_id=? AND a.ditangani=0 ORDER BY a.id DESC')
+      .bind(rombonganId).all()).results || [];
+    
+    return j({
+      ok: true,
+      posisi: logTerbaru ? { lat: logTerbaru.lat, lng: logTerbaru.lng, waktu: logTerbaru.waktu } : null,
+      jamaah: jamaah.map(j => ({
+        id: j.jamaah_id, nama: j.nama, regu: j.regu, mac: j.mac_tag,
+        status: j.status, rssi: j.rssi, jarak: j.jarak_meter,
+        terakhir: j.terakhir_terdeteksi
+      })),
+      alert: alert.map(a => ({
+        id: a.id, jamaah: a.nama, tipe: a.tipe, durasi: a.durasi_menit, waktu: a.waktu
+      })),
+      statistik: {
+        total: jamaah.length,
+        terdeteksi: jamaah.filter(j => j.status === 'terdeteksi').length,
+        hilang: jamaah.filter(j => j.status === 'tidak_terdeteksi').length,
+        alert_aktif: alert.length
+      }
+    });
+  }
+
+  /* GET /api/pub/deteksi-terbaru — Web app ambil data deteksi terbaru */
+  if (path === '/api/pub/deteksi-terbaru' && method === 'GET') {
+    const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200);
+    const mac = url.searchParams.get('mac') || '';
+    
+    let query = 'SELECT d.*, j.nama AS jamaah_nama, j.regu FROM deteksi d LEFT JOIN jamaah j ON j.id=d.jamaah_id';
+    let params = [];
+    
+    if (mac) {
+      query += ' WHERE d.mac_tag=?';
+      params.push(normMac(mac));
+    }
+    
+    query += ' ORDER BY d.id DESC LIMIT ?';
+    params.push(limit);
+    
+    const rows = (await DB.prepare(query).bind(...params).all()).results || [];
+    return j({ ok: true, deteksi: rows });
+  }
+
+  /* GET /api/pub/kawal-riwayat?rombongan=regu-1 — Web app ambil riwayat kawal */
+  if (path === '/api/pub/kawal-riwayat' && method === 'GET') {
+    const rombonganId = url.searchParams.get('rombongan') || '';
+    const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200);
+    
+    if (!rombonganId) return j({ ok: false, error: 'parameter rombongan wajib' }, 400);
+    
+    const rows = (await DB.prepare('SELECT * FROM kawal_log WHERE rombongan_id=? ORDER BY id DESC LIMIT ?')
+      .bind(rombonganId, limit).all()).results || [];
+    
+    return j({ ok: true, riwayat: rows });
   }
 
   return j({ ok: false, error: 'endpoint tidak dikenal' }, 404);
