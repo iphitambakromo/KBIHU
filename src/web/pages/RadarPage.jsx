@@ -570,9 +570,9 @@ export default function RadarPage() {
         onDetected: (mac, rssi, name) => {
           console.log('Native BLE detected:', mac, rssi, name);
           
-          // Cek throttle (2 menit per device)
+          // Cek throttle (30 detik per device — lebih responsif)
           const kini = Date.now();
-          if (terlapor.current[mac] && kini - terlapor.current[mac] < 120000) return;
+          if (terlapor.current[mac] && kini - terlapor.current[mac] < 30000) return;
           terlapor.current[mac] = kini;
           
           // Cari jamaah dari MAC
