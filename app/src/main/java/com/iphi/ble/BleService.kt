@@ -168,11 +168,17 @@ class BleService : Service() {
             val name = try { device.name } catch (e: SecurityException) { null }
             val rssi = result.rssi
             
+            // Filter: proses semua device yang terlihat seperti iTag
+            // Nama mengandung "iTAG" ATAU sudah dikenal ATAU sinyal kuat
             val isITag = name?.contains("iTAG", ignoreCase = true) == true || 
+                         name?.contains("itag", ignoreCase = true) == true ||
                          detectedDevices.containsKey(address) ||
-                         macCache.containsKey(address)
+                         macCache.containsKey(address) ||
+                         rssi > -80 // Sinyal kuat = kemungkinan iTag terdekat
             
-            if (!isITag && detectedDevices.isEmpty()) return
+            if (!isITag) return
+            
+            Log.d(TAG, "BLE detected: $address ($name) RSSI: $rssi")
             
             val cachedMac = macCache[address]
             val existing = detectedDevices[address]
@@ -186,10 +192,12 @@ class BleService : Service() {
             )
             detectedDevices[address] = info
             
+            // Jika belum identifikasi, coba konek untuk baca MAC asli
             if (!info.identified && connectingDevices[address] != true) {
                 scope.launch { konekDanBacaMAC(device) }
             }
             
+            // Jika sudah identifikasi, kirim ke server
             if (info.identified && info.realMac != null) {
                 onBleDetected?.invoke(info.realMac, rssi, info.name ?: "")
                 scope.launch { kirimDeteksi(info) }
