@@ -802,6 +802,12 @@ async function tangani(request, env) {
 
   /* ===== v2.0: ENDPOINT UNTUK NATIVE APP & KAWAL ROMBONGAN ===== */
 
+  /* GET /api/pub/regu — Native app ambil daftar regu (publik, tanpa auth) */
+  if (path === '/api/pub/regu' && method === 'GET') {
+    const ref = await daftarReguRef();
+    return j({ ok: true, regu: ref.map(r => ({ id: r.id, nama: r.nama })) });
+  }
+
   /* POST /api/pub/deteksi — Native app kirim data deteksi iTag
      Setiap kali native app mendeteksi iTag via BLE, kirim data ke sini.
      Server akan: simpan ke tabel deteksi, cocokkan dengan jamaah, update posisi, cek absensi. */
