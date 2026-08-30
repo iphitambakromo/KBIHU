@@ -30,7 +30,7 @@ class BleService : Service() {
     companion object {
         private const val TAG = "BleService"
         private const val NOTIFICATION_ID = 1001
-        private const val KAWAL_INTERVAL = 30_000L
+        private const val KAWAL_INTERVAL = 15_000L  // 15 detik (lebih responsif untuk 50 jamaah)
         private const val FFE0_SERVICE = "0000ffe0-0000-1000-8000-00805f9b34fb"
         private const val FFE3_CHAR = "0000ffe3-0000-1000-8000-00805f9b34fb"
         private const val ALERT_SERVICE = "00001802-0000-1000-8000-00805f9b34fb"
