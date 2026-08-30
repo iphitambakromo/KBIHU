@@ -32,19 +32,56 @@ export function bacaGPS(timeoutMs = 12000, fresh = false) {
     return Promise.resolve({ ...cache });
   }
   
-  // Mode Native: gunakan posisi dari native GPS service
-  if (isNativeApp() && lastNativePos && Date.now() - lastNativePos.waktu < 30000) {
-    cache = lastNativePos;
-    return Promise.resolve({ ...cache });
+  // Mode Native: cek window._nativeLat langsung (dari pushGps())
+  if (isNativeApp()) {
+    if (window._nativeLat && window._nativeLng && window._nativeLat !== 0) {
+      const pos = { 
+        lat: window._nativeLat, 
+        lng: window._nativeLng, 
+        akurasi: window._nativeAcc || 20, 
+        waktu: window._nativeGpsTime || Date.now() 
+      };
+      cache = pos;
+      return Promise.resolve({ ...pos });
+    }
+    
+    // Cek dari callback onGPSUpdate
+    if (lastNativePos && Date.now() - lastNativePos.waktu < 30000) {
+      cache = lastNativePos;
+      return Promise.resolve({ ...cache });
+    }
+    
+    // Tunggu sebentar untuk GPS fix
+    return new Promise(resolve => {
+      let attempts = 0;
+      const check = () => {
+        attempts++;
+        if (window._nativeLat && window._nativeLng && window._nativeLat !== 0) {
+          const pos = { 
+            lat: window._nativeLat, 
+            lng: window._nativeLng, 
+            akurasi: window._nativeAcc || 20, 
+            waktu: Date.now() 
+          };
+          cache = pos;
+          resolve({ ...pos });
+        } else if (attempts < 15) {
+          setTimeout(check, 200);
+        } else {
+          // Fallback
+          resolve({ lat: -6.9932, lng: 110.4203, akurasi: 3000, fallback: true });
+        }
+      };
+      check();
+    });
   }
   
+  // Browser: gunakan navigator.geolocation
   return new Promise(resolve => {
     const gagal = () => {
-      // Jika ada cache (meski lama), gunakan
       if (cache) {
         resolve({ ...cache, fallback: true });
       } else {
-        // Default: Semarang, Indonesia
         resolve({ lat: -6.9932, lng: 110.4203, akurasi: 3000, fallback: true });
       }
     };

@@ -101,7 +101,39 @@ export default function LatihanPage({ token }) {
     petaEl.current?.scrollIntoView({ behavior: 'smooth' });
     // wake lock: layar tetap menyala selama latihan (HP boleh di saku terbalik)
     navigator.wakeLock?.request('screen').then(w => { wakeRef.current = w; }).catch(() => {});
-    watchRef.current = navigator.geolocation.watchPosition(p => {
+    
+    // Cek native GPS dulu
+    const isNative = typeof window !== 'undefined' && typeof window.Android !== 'undefined';
+    
+    if (isNative && window._nativeLat && window._nativeLng && window._nativeLat !== 0) {
+      // Gunakan native GPS
+      const c = { latitude: window._nativeLat, longitude: window._nativeLng, accuracy: window._nativeAcc || 20 };
+      posRef.current = { lat: c.latitude, lng: c.longitude };
+      tanda.current?.setLatLng([c.latitude, c.longitude]);
+      if (map.current) map.current.panTo([c.latitude, c.longitude]);
+      setGpsInfo(`✅ GPS aktif (±${Math.round(c.accuracy)} m) — jalan dulu, angka bertambah sendiri`);
+      
+      // Update dari native GPS callback
+      window._latihanGpsUpdate = (lat, lng, acc) => {
+        posRef.current = { lat, lng };
+        tanda.current?.setLatLng([lat, lng]);
+        if (map.current) map.current.panTo([lat, lng]);
+        // Proses GPS seperti biasa
+        const L0 = lt.current;
+        if (!L0.akhir) { L0.akhir = { lat, lng, ts: Date.now() }; perbaruiRute(lat, lng); return; }
+        const dJ = jarakM(L0.akhir, { lat, lng });
+        const dt = (Date.now() - L0.akhir.ts) / 1000;
+        const v = dt > 0 ? dJ / dt : 9;
+        const minM = Math.max(6, acc * 0.7);
+        if (dJ >= minM && v > 0.2 && v < 3.2) {
+          L0.akhir = { lat, lng, ts: Date.now() };
+          L0.lastGerak = Date.now();
+          perbaruiRute(lat, lng);
+        }
+      };
+    } else {
+      // Fallback ke browser geolocation
+      watchRef.current = navigator.geolocation.watchPosition(p => {
       const c = p.coords, ak = c.accuracy || 30;
       posRef.current = { lat: c.latitude, lng: c.longitude };
       tanda.current?.setLatLng([c.latitude, c.longitude]);
@@ -145,6 +177,7 @@ export default function LatihanPage({ token }) {
       setGpsInfo(err.code === 1 ? '🔒 Akses lokasi DITOLAK — ketuk ikon gembok di address bar → Izinkan → muat ulang.' :
         err.code === 3 ? '⏱ GPS lama merespons — mulai lagi di ruang terbuka.' : '⚠️ GPS gagal: ' + err.message);
     }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
+    }
   };
 
   const aktifS = () => {
