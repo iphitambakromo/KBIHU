@@ -6,7 +6,7 @@ import { useApp } from '../App.jsx';
 export default function KawalPage() {
   const { state, tampilToast } = useApp();
   const [jmList, setJmList] = useState([]);
-  const [radius, setRadius] = useState(500); // Fixed 500m
+  const [radius, setRadius] = useState(() => { try { return parseInt(localStorage.getItem('iphi_kawal_radius')) || 500; } catch { return 500; } });
   const [aktif, setAktif] = useState(false);
   const [statusMap, setStatusMap] = useState({});
   const [alerts, setAlerts] = useState([]);
@@ -25,6 +25,9 @@ export default function KawalPage() {
   useEffect(() => {
     if (state?.jamaah) setJmList(state.jamaah.filter(m => m.punya_gelang));
   }, [state]);
+
+  // Save radius ke localStorage
+  useEffect(() => { try { localStorage.setItem('iphi_kawal_radius', String(radius)); } catch {} }, [radius]);
 
   // Init map
   useEffect(() => {
@@ -296,6 +299,34 @@ export default function KawalPage() {
 
         {/* Peta */}
         <div ref={petaRef} className="h-[250px] rounded-xl border border-slate-200" />
+
+        {/* Radius setting */}
+        <div>
+          <label className="text-[12px] font-bold text-slate-600 flex justify-between">
+            <span>Radius Visual</span>
+            <span className="font-mono">{radius} m</span>
+          </label>
+          <input
+            type="range"
+            min="50"
+            max="1000"
+            step="50"
+            value={radius}
+            onChange={e => setRadius(Number(e.target.value))}
+            className="w-full accent-emerald-700"
+          />
+          <div className="flex gap-2 mt-1">
+            {[100, 200, 500, 1000].map(r => (
+              <button
+                key={r}
+                className={`btn flex-1 !min-h-[34px] !text-[12px] ${radius === r ? 'btn-utama' : 'btn-muda'}`}
+                onClick={() => setRadius(r)}
+              >
+                {r >= 1000 ? '1km' : r + 'm'}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* Statistik */}
         <div className="grid grid-cols-4 gap-2 text-center">

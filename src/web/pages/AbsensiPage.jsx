@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { pdfAbsensi } from '../lib/absensiPdf.js';
 import { useApp } from '../App.jsx';
-import { isNativeApp, startBLE, stopBLE } from '../lib/nativeBridge.js';
+import { isNativeApp, startBLE, stopBLE, vibrate as nativeVibrate } from '../lib/nativeBridge.js';
 
 export default function AbsensiPage() {
   const { sesi, tampilToast, bolehKelola } = useApp();
@@ -13,6 +13,9 @@ export default function AbsensiPage() {
   const [titikList, setTitikList] = useState([]);
   const [namaAcara, setNamaAcara] = useState('');
   const [radarAktif, setRadarAktif] = useState(false);
+  const [popup, setPopup] = useState(null); // {nama, regu, waktu}
+  const popupTimerRef = useRef(null);
+  const sudahHadirRef = useRef(new Set()); // Track jamaah yang sudah hadir
 
   const muatAktif = useCallback(async () => {
     const d = await api('/api/absensi/aktif');
@@ -24,12 +27,11 @@ export default function AbsensiPage() {
     if (!evId) { setRekap(null); return; }
     const d = await api('/api/absensi/rekap?event=' + encodeURIComponent(evId));
     if (d.ok) {
-      // Bandingkan data baru dengan lama untuk hindari re-render tidak perlu
       setRekap(prev => {
         if (!prev) return d;
         const prevSig = JSON.stringify(prev.rows?.map(r => [r.id, r.status, r.waktu]));
         const newSig = JSON.stringify(d.rows?.map(r => [r.id, r.status, r.waktu]));
-        if (prevSig === newSig) return prev; // Data sama, tidak perlu update
+        if (prevSig === newSig) return prev;
         return d;
       });
     }
@@ -45,21 +47,33 @@ export default function AbsensiPage() {
       const ev = await muatAktif();
       const d = await api('/api/absensi/event');
       if (d.ok) setEvents(d.events || []);
-      if (ev) { muatRekap(ev.id); setRadarAktif(true); startRadar(); }
+      if (ev) { muatRekap(ev.id); startRadar(); }
       else if (d.ok && d.events.length) muatRekap(d.events[0].id);
       const st = await api('/api/state');
       if (st.ok) setTitikList(st.titik || []);
     })();
-  }, [muatAktif, muatRekap, muatEvents]);
+  }, []);
 
   // Poll setiap 3 detik saat acara aktif
   useEffect(() => {
     if (!aktif) return;
-    const t = setInterval(() => { if (!document.hidden) { muatRekap(aktif.id); } }, 3000);
+    const t = setInterval(() => {
+      if (!document.hidden) muatRekap(aktif.id);
+    }, 3000);
     return () => clearInterval(t);
   }, [aktif, muatRekap]);
 
-  // Start radar BLE via native bridge
+  // Tampilkan popup jamaah hadir
+  const tampilPopup = (nama, regu) => {
+    setPopup({ nama, regu, waktu: new Date().toLocaleTimeString('id-ID') });
+    if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
+    popupTimerRef.current = setTimeout(() => setPopup(null), 3000);
+    // Vibrate
+    if (isNativeApp()) nativeVibrate('200');
+    else if (navigator.vibrate) navigator.vibrate(200);
+  };
+
+  // Start radar BLE
   const startRadar = () => {
     if (isNativeApp()) {
       const serverUrl = localStorage.getItem('iphi_server_url') || 'https://kbihu.iphi-haji.workers.dev';
@@ -67,20 +81,54 @@ export default function AbsensiPage() {
       startBLE(serverUrl, rombonganId, {
         onDetected: (mac, rssi, name) => {
           console.log('[Absensi] Detected:', mac, name);
-          // Native app sudah kirim data ke server via /api/pub/deteksi
-          // Web app hanya refresh rekap untuk update UI
+          // Cek apakah jamaah ini sudah hadir sebelumnya
+          if (!sudahHadirRef.current.has(mac)) {
+            sudahHadirRef.current.add(mac);
+            // Cari nama jamaah dari rekap
+            const jm = rekap?.rows?.find(r => r.mac_tag === mac);
+            if (jm) {
+              tampilPopup(jm.nama, jm.regu);
+            } else {
+              tampilPopup(name || mac, '');
+            }
+          }
+          // Refresh rekap
           muatRekap(aktif?.id);
         },
         onStatus: (status) => console.log('[Absensi] Status:', status)
       });
       setRadarAktif(true);
+    } else {
+      // Browser: gunakan fetch polling ke server
+      setRadarAktif(true);
+      pollDeteksi();
     }
+  };
+
+  // Poll deteksi dari server (untuk browser)
+  const pollDeteksi = () => {
+    const interval = setInterval(async () => {
+      if (!aktif) { clearInterval(interval); return; }
+      try {
+        const d = await api('/api/pub/deteksi-terbaru?limit=5');
+        if (d.ok && d.deteksi) {
+          for (const det of d.deteksi) {
+            if (!sudahHadirRef.current.has(det.mac_tag)) {
+              sudahHadirRef.current.add(det.mac_tag);
+              tampilPopup(det.jamaah_nama || det.mac_tag, det.regu || '');
+            }
+          }
+        }
+        muatRekap(aktif?.id);
+      } catch (e) {}
+    }, 3000);
   };
 
   // Stop radar
   const stopRadar = () => {
     if (isNativeApp()) stopBLE();
     setRadarAktif(false);
+    sudahHadirRef.current.clear();
   };
 
   const mulai = async () => {
@@ -109,7 +157,9 @@ export default function AbsensiPage() {
     const d = await api('/api/absensi/hadir', { method: 'POST', body: JSON.stringify({ eventId: aktif.id, jamaahId: jid, status }) });
     if (d.ok) muatRekap(aktif.id); else tampilToast('Gagal: ' + (d.error || ''), true);
   };
+
   const lihatRiwayat = async (id) => { await muatAktif(); muatRekap(id); };
+
   const hapusEvent = async (e) => {
     if (!confirm('Hapus acara "' + e.nama + '" beserta datanya?')) return;
     const d = await api('/api/absensi/hapus', { method: 'POST', body: JSON.stringify({ id: e.id }) });
@@ -123,6 +173,20 @@ export default function AbsensiPage() {
     <div className="p-3 md:p-5 max-w-3xl mx-auto space-y-4 pb-10">
       <h1 className="text-2xl font-extrabold text-hijau">✅ Absensi</h1>
       <p className="text-slate-500 text-[13.5px] -mt-2">Mulai acara → radar otomatis aktif → jamaah terdeteksi = <b>HADIR</b>.</p>
+
+      {/* Popup jamaah hadir */}
+      {popup && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 animate-bounce">
+          <div className="bg-emerald-600 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3">
+            <span className="text-2xl">✅</span>
+            <div>
+              <b className="text-lg">{popup.nama}</b>
+              {popup.regu && <span className="text-emerald-200 text-sm ml-2">({popup.regu})</span>}
+              <div className="text-emerald-200 text-xs">HADIR · {popup.waktu}</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {bolehKelola && (
@@ -203,17 +267,23 @@ export default function AbsensiPage() {
         </div>
       )}
 
+      {/* Riwayat acara */}
       <div className="kartu p-4">
         <b className="text-hijau">🕘 Riwayat acara</b>
         <div className="mt-2 space-y-2">
           {events.length === 0 && <p className="text-slate-500 text-[13px]">Belum ada acara.</p>}
           {events.map(e => (
-            <div key={e.id} onClick={() => lihatRiwayat(e.id)} className="w-full text-left border border-slate-200 rounded-xl p-3 hover:bg-emerald-50 transition cursor-pointer flex items-center gap-2">
-              <div className="flex-1 min-w-0">
-                <b className="text-[13.5px]">{e.ditutup ? '🕘' : '🔴'} {e.nama}</b>
-                <small className="block text-slate-500 text-[11.5px] mt-0.5">{new Date(e.waktu).toLocaleString('id-ID')} · {e.titik_nama || '—'} · <b>{e.hadir} hadir</b></small>
+            <div key={e.id} className="border border-slate-200 rounded-xl p-3 hover:bg-emerald-50 transition">
+              <div className="flex items-center gap-2 cursor-pointer" onClick={() => lihatRiwayat(e.id)}>
+                <div className="flex-1 min-w-0">
+                  <b className="text-[13.5px]">{e.ditutup ? '🕘' : '🔴'} {e.nama}</b>
+                  <small className="block text-slate-500 text-[11.5px] mt-0.5">{new Date(e.waktu).toLocaleString('id-ID')} · {e.titik_nama || '—'} · <b>{e.hadir} hadir</b></small>
+                </div>
+                <div className="flex gap-1.5">
+                  <button className="btn btn-muda !min-h-[32px] !px-2.5 !text-[11px]" onClick={ev => { ev.stopPropagation(); lihatRiwayat(e.id); }}>📋</button>
+                  {bolehKelola && <button className="btn btn-merah !min-h-[32px] !px-2.5 !text-[11px]" onClick={ev => { ev.stopPropagation(); hapusEvent(e); }}>🗑</button>}
+                </div>
               </div>
-              {bolehKelola && <button className="btn btn-merah !min-h-[32px] !px-2.5 !text-[11px] shrink-0" onClick={ev => { ev.stopPropagation(); hapusEvent(e); }}>🗑</button>}
             </div>
           ))}
         </div>
