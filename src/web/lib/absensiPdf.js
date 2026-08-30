@@ -101,16 +101,23 @@ export function pdfAbsensi(rekap) {
   // Cek apakah di WebView (native app)
   const isWebView = typeof window !== 'undefined' && typeof window.Android !== 'undefined';
   
-  if (isWebView) {
-    // WebView: buka PDF di tab baru atau download via data URL
+  if (isWebView && window.Android.cetakPDF) {
+    // Native app: kirim base64 ke Android untuk di-share
+    try {
+      const pdfBase64 = doc.output('datauristring').split(',')[1];
+      window.Android.cetakPDF(pdfBase64, fileName);
+    } catch (e) {
+      // Fallback: download langsung
+      doc.save(fileName);
+    }
+  } else if (isWebView) {
+    // WebView tanpa cetakPDF: buka di tab baru
     try {
       const pdfBlob = doc.output('blob');
       const pdfUrl = URL.createObjectURL(pdfBlob);
       window.open(pdfUrl, '_blank');
-      // Cleanup setelah 1 menit
       setTimeout(() => URL.revokeObjectURL(pdfUrl), 60000);
     } catch (e) {
-      // Fallback: download langsung
       doc.save(fileName);
     }
   } else {
