@@ -141,17 +141,33 @@ export default function KawalPage() {
     });
     jamaahMarkersRef.current = {};
 
-    jmList.forEach(m => {
+    // Posisi device (pusat)
+    const deviceLat = userLat.current;
+    const deviceLng = userLng.current;
+    if (!deviceLat || !deviceLng) return;
+
+    // Hitung offset untuk setiap jamaah (agar tidak tumpang tindih)
+    const angleStep = (2 * Math.PI) / Math.max(jmList.length, 1);
+
+    jmList.forEach((m, idx) => {
       const s = status[m.id];
       if (!s) return;
 
-      // Posisi: gunakan posisi terakhir terdeteksi
-      const posisi = posisiRef.current[m.id];
-      if (!posisi) return;
+      // Posisi: gunakan posisi terakhir terdeteksi, atau posisi device dengan offset
+      let posisi = posisiRef.current[m.id];
+      if (!posisi) {
+        // Belum terdeteksi: tampilkan di dekat device dengan offset kecil
+        const offset = 0.0002; // ~20 meter
+        const angle = angleStep * idx;
+        posisi = {
+          lat: deviceLat + Math.sin(angle) * offset,
+          lng: deviceLng + Math.cos(angle) * offset
+        };
+      }
 
-      const warna = s.status === 'bersama' ? '#38A169' : '#EF4444';
-      const ikon = s.status === 'bersama' ? '✅' : '❓';
-      const teksStatus = s.status === 'bersama' ? 'BERSAMA' : 'JAUH';
+      const warna = s.status === 'bersama' ? '#38A169' : s.status === 'jauh' ? '#EF4444' : '#94A3B8';
+      const ikon = s.status === 'bersama' ? '✅' : s.status === 'jauh' ? '❓' : '⏳';
+      const teksStatus = s.status === 'bersama' ? 'BERSAMA' : s.status === 'jauh' ? 'JAUH' : 'menunggu';
 
       const marker = L.marker([posisi.lat, posisi.lng], {
         icon: L.divIcon({
