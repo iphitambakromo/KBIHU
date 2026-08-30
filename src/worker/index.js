@@ -210,8 +210,8 @@ async function tangani(request, env) {
       const tt = await DB.prepare('SELECT * FROM titik WHERE id=?').bind(ev.titik_id || '').first();
       const d = tt ? jarakM(b.lat, b.lng, tt.lat, tt.lng) : Infinity;
       if (tt && d <= tt.radius) {
-        await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, lat, lng, waktu, oleh) VALUES (?,?,?,?,?,?,?,?)')
-          .bind(ev.id, m.id, 'hadir', 'checkin', b.lat, b.lng, nowISO(), 'kartu').run();
+        await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, waktu, oleh) VALUES (?,?,?,?,?,?)')
+          .bind(ev.id, m.id, 'hadir', 'checkin', nowISO(), 'kartu').run();
         absensi = { hadir: true, acara: ev.nama, titik: tt.nama };
       } else if (tt) {
         absensi = { hadir: false, acara: ev.nama, titik: tt.nama, sisaMeter: Math.round(d - tt.radius) };
@@ -315,8 +315,8 @@ async function tangani(request, env) {
       if (USER.peran === 'ketua-regu' && String(m.regu || '').trim() !== String(USER.regu || '').trim()) return j({ ok: false, error: 'di luar regu Anda' }, 403);
     }
     if (status === 'hadir') {
-      await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, lat, lng, waktu, oleh) VALUES (?,?,?,?,?,?,?,?)')
-        .bind(ev.id, m.id, 'hadir', b.sumber || 'manual', Number.isFinite(b.lat) ? b.lat : null, Number.isFinite(b.lng) ? b.lng : null, nowISO(), USER ? USER.username : 'kartu').run();
+      await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, waktu, oleh) VALUES (?,?,?,?,?,?)')
+        .bind(ev.id, m.id, 'hadir', b.sumber || 'manual', nowISO(), USER ? USER.username : 'kartu').run();
     } else {
       await DB.prepare('INSERT INTO absensi (event_id, jamaah_id, status, sumber, waktu, oleh) VALUES (?,?,?,?,?,?) ON CONFLICT(event_id, jamaah_id) DO UPDATE SET status=excluded.status, sumber=excluded.sumber, waktu=excluded.waktu, oleh=excluded.oleh')
         .bind(ev.id, m.id, status, 'manual', nowISO(), USER.username).run();
