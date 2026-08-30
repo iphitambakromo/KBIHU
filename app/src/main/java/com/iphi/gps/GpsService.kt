@@ -20,7 +20,7 @@ class GpsService : Service() {
     companion object {
         private const val TAG = "GpsService"
         private const val NOTIFICATION_ID = 1002
-        private const val UPDATE_INTERVAL = 5_000L    // 5 detik (lebih responsif)
+        private const val UPDATE_INTERVAL = 5_000L    // 5 detik
         private const val FASTEST_INTERVAL = 3_000L   // 3 detik minimum
     }
 
@@ -73,7 +73,7 @@ class GpsService : Service() {
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, UPDATE_INTERVAL)
             .setMinUpdateIntervalMillis(FASTEST_INTERVAL)
             .setMaxUpdateDelayMillis(10_000)
-            .setWaitForAccurateLocation(true)  // Tunggu fix akurat
+            .setWaitForAccurateLocation(false)  // ← FIX: false supaya langsung dapat lokasi
             .build()
         try {
             fusedClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())

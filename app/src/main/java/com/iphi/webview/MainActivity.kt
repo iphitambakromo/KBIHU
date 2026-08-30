@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothManager
 import android.content.*
 import android.content.pm.PackageManager
+import android.location.Location
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -13,15 +14,13 @@ import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
-import android.view.KeyEvent
-import android.view.View
 import android.webkit.*
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.gms.location.*
+import com.google.android.gms.tasks.CancellationTokenSource
 import com.iphi.IphiApp
 import com.iphi.R
 import com.iphi.ble.BleService
@@ -44,6 +43,7 @@ class MainActivity : AppCompatActivity() {
     private var lastLng = 0.0
     private var lastAcc = 0f
     private var gpsCount = 0
+    private var pageLoaded = false
 
     private val bleConn = object : ServiceConnection {
         override fun onServiceConnected(n: ComponentName?, s: IBinder?) {
@@ -110,52 +110,54 @@ class MainActivity : AppCompatActivity() {
         }
         Log.d(TAG, "Starting direct GPS...")
 
-        // 1. Last known location (instant)
+        // 1. Last known location (instant, mungkin null)
         try {
             fusedClient.lastLocation.addOnSuccessListener { loc ->
                 if (loc != null) {
-                    lastLat = loc.latitude
-                    lastLng = loc.longitude
-                    lastAcc = loc.accuracy
-                    Log.d(TAG, "Last GPS: $lastLat, $lastLng (±${lastAcc}m)")
-                    pushGpsToWebView()
+                    updateGps(loc.latitude, loc.longitude, loc.accuracy, "lastLocation")
+                } else {
+                    Log.d(TAG, "lastLocation is null, trying getCurrentLocation...")
+                    // 2.getCurrentLocation() — lebih cepat dari requestLocationUpdates
+                    tryGetImmediateLocation()
                 }
+            }.addOnFailureListener {
+                Log.e(TAG, "lastLocation failed", it)
+                tryGetImmediateLocation()
             }
-        } catch (e: Exception) { Log.e(TAG, "lastLocation error", e) }
+        } catch (e: Exception) {
+            Log.e(TAG, "lastLocation error", e)
+            tryGetImmediateLocation()
+        }
 
-        // 2. Realtime updates (setiap 3 detik)
+        // 3. Realtime updates (setiap 3 detik)
+        // BUG FIX: setWaitForAccurateLocation(false) supaya langsung dapat fix pertama
         val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000)
-            .setMinUpdateIntervalMillis(2000)
-            .setWaitForAccurateLocation(true)
+            .setMinUpdateIntervalMillis(1500)
+            .setWaitForAccurateLocation(false)  // ← FIX: false supaya langsung dapat lokasi
             .build()
 
         fusedClient.requestLocationUpdates(req, object : LocationCallback() {
             override fun onLocationResult(r: LocationResult) {
                 r.lastLocation?.let { loc ->
-                    // Filter: hanya update jika akurasi lebih baik
-                    if (loc.accuracy <= lastAcc || lastAcc == 0f || gpsCount < 5) {
-                        lastLat = loc.latitude
-                        lastLng = loc.longitude
-                        lastAcc = loc.accuracy
-                        gpsCount++
-                        Log.d(TAG, "GPS #$gpsCount: $lastLat, $lastLng (±${lastAcc}m)")
-                        pushGpsToWebView()
-                    }
+                    // BUG FIX: hapus filter akurasi yang terlalu ketat
+                    // Terima semua update, biar web app yang filter
+                    updateGps(loc.latitude, loc.longitude, loc.accuracy, "realtime")
                 }
             }
         }, Looper.getMainLooper())
 
-        // 3. Periodic push ke WebView (backup setiap 3 detik)
+        // 4. Periodic push ke WebView (backup setiap 2 detik)
+        // BUG FIX: mulai lebih cepat (2 detik, bukan 5 detik)
         webView.postDelayed(object : Runnable {
             override fun run() {
                 if (!isDestroyed) {
                     pushGpsToWebView()
-                    webView.postDelayed(this, 3000)
+                    webView.postDelayed(this, 2000)  // ← FIX: 2 detik
                 }
             }
-        }, 5000)
+        }, 1000)  // ← FIX: mulai 1 detik setelah onCreate
 
-        // 4. Start GPS service untuk background tracking
+        // 5. Start GPS service untuk background tracking
         val srvUrl = getSharedPreferences(IphiApp.PREFS_NAME, MODE_PRIVATE)
             .getString(IphiApp.PREF_SERVER_URL, IphiApp.DEFAULT_SERVER_URL) ?: IphiApp.DEFAULT_SERVER_URL
         val devId = getSharedPreferences(IphiApp.PREFS_NAME, MODE_PRIVATE)
@@ -167,6 +169,43 @@ class MainActivity : AppCompatActivity() {
         }
         startForegroundService(intent)
         bindService(intent, gpsConn, Context.BIND_AUTO_CREATE)
+    }
+
+    /**
+     * getCurrentLocation() — dapat lokasi SEKARANG tanpa tunggu update berikutnya
+     * Lebih cepat dari requestLocationUpdates untuk fix pertama
+     */
+    @SuppressLint("MissingPermission")
+    private fun tryGetImmediateLocation() {
+        Log.d(TAG, "Trying getCurrentLocation() for immediate fix...")
+        val cts = CancellationTokenSource()
+        fusedClient.getCurrentLocation(
+            Priority.PRIORITY_HIGH_ACCURACY,
+            cts.token
+        ).addOnSuccessListener { loc ->
+            if (loc != null) {
+                updateGps(loc.latitude, loc.longitude, loc.accuracy, "getCurrentLocation")
+            } else {
+                Log.w(TAG, "getCurrentLocation also null, waiting for realtime updates...")
+            }
+        }.addOnFailureListener {
+            Log.e(TAG, "getCurrentLocation failed", it)
+        }
+
+        // Timeout: batalkan request10 detik
+        webView.postDelayed({ cts.cancel() }, 10_000)
+    }
+
+    /**
+     * Update GPS — terima lokasi & push ke WebView
+     */
+    private fun updateGps(lat: Double, lng: Double, acc: Float, source: String) {
+        lastLat = lat
+        lastLng = lng
+        lastAcc = acc
+        gpsCount++
+        Log.d(TAG, "GPS #$gpsCount ($source): $lat, $lng (±${acc}m)")
+        pushGpsToWebView()
     }
 
     private fun pushGpsToWebView() {
@@ -203,7 +242,6 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(v: WebView?, r: WebResourceRequest?): Boolean {
                 val url = r?.url.toString()
-                // WhatsApp
                 if (url.contains("wa.me") || url.contains("whatsapp.com")) {
                     try {
                         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).setPackage("com.whatsapp"))
@@ -212,12 +250,10 @@ class MainActivity : AppCompatActivity() {
                     }
                     return true
                 }
-                // Telepon
                 if (url.startsWith("tel:")) {
                     startActivity(Intent(Intent.ACTION_DIAL, Uri.parse(url)))
                     return true
                 }
-                // Email
                 if (url.startsWith("mailto:")) {
                     startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse(url)))
                     return true
@@ -226,7 +262,10 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onPageFinished(v: WebView?, url: String?) {
                 super.onPageFinished(v, url)
+                pageLoaded = true
                 injectBridge()
+                // BUG FIX: push GPS lagi setelah halaman selesai load
+                pushGpsToWebView()
             }
             override fun onReceivedError(v: WebView?, r: WebResourceRequest?, e: WebResourceError?) {
                 super.onReceivedError(v, r, e)
@@ -241,7 +280,6 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
         }
-        // JavaScript Interface
         webView.addJavascriptInterface(WebAppInterface(), "Android")
     }
 
@@ -381,7 +419,7 @@ class MainActivity : AppCompatActivity() {
         fun hasGPS(): Boolean = lastLat != 0.0 && lastLng != 0.0
 
         @JavascriptInterface
-        fun getVersion(): String = "3.4.0"
+        fun getVersion(): String = "3.4.1"
 
         @JavascriptInterface
         fun reload() {
