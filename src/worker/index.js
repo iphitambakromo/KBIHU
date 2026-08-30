@@ -410,26 +410,31 @@ async function tangani(request, env) {
     if (!m && nmBcast && !/^(itag|itag\s+baru)$/i.test(nmBcast) && nmBcast !== bid)
       m = semuaJm.find(r => kodeBaris(r.beacon_id).includes(nmBcast)) || null;
     if (!m) return j({ ok: false, error: 'tag tidak terdaftar' }, 404);
-    // koordinat radar (pelapor); fallback: titik terdekat tidak diketahui -> pakai posisi terakhir? tolak bila tak ada GPS
-    if (!Number.isFinite(b.lat) || !Number.isFinite(b.lng)) return j({ ok: false, error: 'aktifkan GPS radar' }, 400);
-    const r = await catatPosisi(DB, m.id, b.lat, b.lng, 'ble');
+    
+    // RSSI threshold (sangat lenient: -100 dBm = hampir semua deteksi = HADIR)
+    const RSSI_THRESHOLD = -100;
+    const rssi = Number(b.rssi) || -100;
+    
+    // Catat posisi (GPS opsional, tidak wajib)
+    const lat = Number.isFinite(b.lat) ? b.lat : null;
+    const lng = Number.isFinite(b.lng) ? b.lng : null;
+    if (lat && lng) {
+      await catatPosisi(DB, m.id, lat, lng, 'ble');
+    }
+    
     await DB.prepare('INSERT INTO kejadian (sesi_id, jamaah_id, tipe, zona_titik, keterangan, waktu) VALUES (?,?,?,?,?,?)')
-      .bind('trk1', m.id, 'ble', r.titik, `Gelang terlihat radar HP${b.oleh ? ' (' + String(b.oleh).slice(0, 40) + ')' : ''}`, nowISO()).run();
-    // absensi: bila acara aktif dgn titik dan radar berada dlm radius -> jamaah hadir
+      .bind('trk1', m.id, 'ble', null, `Gelang terlihat radar HP${b.oleh ? ' (' + String(b.oleh).slice(0, 40) + ')' : ''}`, nowISO()).run();
+    
+    // absensi: LANGSUNG HADIR jika RSSI > threshold (tanpa GPS check!)
     let absensi = null;
     const ev = await DB.prepare('SELECT * FROM absensi_event WHERE ditutup=0 ORDER BY waktu DESC LIMIT 1').first();
-    if (ev) {
-      const tt = await DB.prepare('SELECT * FROM titik WHERE id=?').bind(ev.titik_id || '').first();
-      const d = tt ? jarakM(b.lat, b.lng, tt.lat, tt.lng) : Infinity;
-      if (tt && d <= tt.radius) {
-        await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, lat, lng, waktu, oleh) VALUES (?,?,?,?,?,?,?,?)')
-          .bind(ev.id, m.id, 'hadir', 'gelang', b.lat, b.lng, nowISO(), String(b.oleh || 'radar').slice(0, 40)).run();
-        absensi = { hadir: true, acara: ev.nama, titik: tt.nama };
-      } else if (tt) {
-        absensi = { hadir: false, acara: ev.nama, titik: tt.nama, sisaMeter: Math.round(d - tt.radius) };
-      }
+    if (ev && rssi > RSSI_THRESHOLD) {
+      await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, waktu, oleh) VALUES (?,?,?,?,?,?,?)')
+        .bind(ev.id, m.id, 'hadir', 'gelang', nowISO(), String(b.oleh || 'radar').slice(0, 40)).run();
+      absensi = { hadir: true, acara: ev.nama };
     }
-    return j({ ok: true, jamaah: m.nama, titik: r.titik, absensi });
+    
+    return j({ ok: true, jamaah: m.nama, absensi });
   }
 
   /* publik: simpan posisi background tracking */
@@ -810,11 +815,15 @@ async function tangani(request, env) {
 
   /* POST /api/pub/deteksi — Native app kirim data deteksi iTag
      Setiap kali native app mendeteksi iTag via BLE, kirim data ke sini.
-     Server akan: simpan ke tabel deteksi, cocokkan dengan jamaah, update posisi, cek absensi. */
+     Server akan: simpan ke tabel deteksi, cocokkan dengan jamaah, cek absensi (langsung HADIR jika RSSI > -100). */
   if (path === '/api/pub/deteksi' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     const mac = normMac(b.mac_tag);
     if (!mac) return j({ ok: false, error: 'mac_tag wajib' }, 400);
+    
+    // RSSI threshold (sangat lenient: -100 dBm = hampir semua deteksi = HADIR)
+    const RSSI_THRESHOLD = -100;
+    const rssi = Number(b.rssi) || -100;
     
     // Cari jamaah berdasarkan MAC
     const jm = await DB.prepare('SELECT * FROM jamaah WHERE mac_tag=?').bind(mac).first();
@@ -822,23 +831,16 @@ async function tangani(request, env) {
     
     // Simpan ke tabel deteksi
     await DB.prepare('INSERT INTO deteksi (mac_tag, jamaah_id, device_id, lat, lng, rssi, sumber, waktu) VALUES (?,?,?,?,?,?,?,?)')
-      .bind(mac, jamaahId, b.device_id || '', b.lat || null, b.lng || null, b.rssi || null, b.sumber || 'native', nowISO()).run();
+      .bind(mac, jamaahId, b.device_id || '', b.lat || null, b.lng || null, rssi, b.sumber || 'native', nowISO()).run();
     
-    // Jika jamaah ditemukan, update posisi & cek absensi
-    if (jm && Number.isFinite(b.lat) && Number.isFinite(b.lng)) {
-      await catatPosisi(DB, jm.id, b.lat, b.lng, 'native');
-      
+    // Jika jamaah ditemukan, cek absensi (LANGSUNG HADIR jika RSSI > threshold)
+    if (jm) {
       // Cek absensi aktif
       const ev = await DB.prepare('SELECT * FROM absensi_event WHERE ditutup=0 ORDER BY waktu DESC LIMIT 1').first();
-      if (ev) {
-        const tt = await DB.prepare('SELECT * FROM titik WHERE id=?').bind(ev.titik_id || '').first();
-        if (tt) {
-          const d = jarakM(b.lat, b.lng, tt.lat, tt.lng);
-          if (d <= tt.radius) {
-            await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, lat, lng, waktu, oleh) VALUES (?,?,?,?,?,?,?,?)')
-              .bind(ev.id, jm.id, 'hadir', 'native', b.lat, b.lng, nowISO(), 'native-app').run();
-          }
-        }
+      if (ev && rssi > RSSI_THRESHOLD) {
+        // Gelang terdeteksi dalam range → LANGSUNG HADIR (tanpa GPS check!)
+        await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, waktu, oleh) VALUES (?,?,?,?,?,?,?)')
+          .bind(ev.id, jm.id, 'hadir', 'gelang', nowISO(), 'radar').run();
       }
     }
     
