@@ -2,8 +2,10 @@
 <resources>
     <style name="Theme.IPHI" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="colorPrimary">@color/iphi_green</item>
-        <item name="colorPrimaryVariant">@color/iphi_green</item>
+        <item name="colorPrimaryVariant">@color/iphi_green_dark</item>
         <item name="colorOnPrimary">@color/white</item>
         <item name="android:statusBarColor">@color/iphi_green</item>
+        <item name="android:navigationBarColor">@color/iphi_green</item>
+        <item name="android:windowBackground">@color/iphi_green</item>
     </style>
 </resources>

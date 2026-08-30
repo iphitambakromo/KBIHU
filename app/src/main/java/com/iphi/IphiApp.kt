@@ -14,12 +14,22 @@ class IphiApp : Application() {
         const val PREF_SERVER_URL = "server_url"
         const val PREF_ROMBONGAN = "rombongan_id"
         const val PREF_MAC_CACHE = "mac_cache"
+        const val PREF_DEVICE_ID = "device_id"
         const val DEFAULT_SERVER_URL = "https://kbihu.iphi-haji.workers.dev"
     }
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
+        initDeviceId()
+    }
+
+    private fun initDeviceId() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        if (!prefs.contains(PREF_DEVICE_ID)) {
+            val id = "${Build.MANUFACTURER}_${Build.MODEL}_${System.currentTimeMillis()}"
+            prefs.edit().putString(PREF_DEVICE_ID, id).apply()
+        }
     }
 
     private fun createNotificationChannels() {

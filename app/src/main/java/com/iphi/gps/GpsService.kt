@@ -20,14 +20,14 @@ class GpsService : Service() {
     companion object {
         private const val TAG = "GpsService"
         private const val NOTIFICATION_ID = 1002
-        private const val UPDATE_INTERVAL = 10_000L
-        private const val FASTEST_INTERVAL = 5_000L
+        private const val UPDATE_INTERVAL = 5_000L    // 5 detik (lebih responsif)
+        private const val FASTEST_INTERVAL = 3_000L   // 3 detik minimum
     }
 
     private lateinit var fusedClient: FusedLocationProviderClient
     private lateinit var locationCallback: LocationCallback
     private val binder = GpsBinder()
-    
+
     var onLocationUpdate: ((Double, Double, Float) -> Unit)? = null
     var serverUrl = ""
     var deviceId = ""
@@ -72,12 +72,13 @@ class GpsService : Service() {
         if (isTracking) return
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, UPDATE_INTERVAL)
             .setMinUpdateIntervalMillis(FASTEST_INTERVAL)
-            .setMaxUpdateDelayMillis(15_000)
+            .setMaxUpdateDelayMillis(10_000)
+            .setWaitForAccurateLocation(true)  // Tunggu fix akurat
             .build()
         try {
             fusedClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
             isTracking = true
-            Log.d(TAG, "GPS tracking started")
+            Log.d(TAG, "GPS tracking started (interval: ${UPDATE_INTERVAL}ms)")
         } catch (e: SecurityException) {
             Log.e(TAG, "GPS permission denied", e)
         }

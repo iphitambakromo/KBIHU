@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">IPHI</string>
+    <string name="channel_ble">BLE Scanner</string>
+    <string name="channel_gps">GPS Tracker</string>
+    <string name="channel_alert">Peringatan</string>
 </resources>
