@@ -13,7 +13,8 @@ export default function AbsensiPage() {
   const [titikList, setTitikList] = useState([]);
   const [namaAcara, setNamaAcara] = useState('');
   const [radarAktif, setRadarAktif] = useState(false);
-  const sudahHadirRef = useRef(new Set()); // Track jamaah yang sudah hadir
+  const sudahHadirRef = useRef(new Set());
+  const macMapRef = useRef({}); // {mac: {nama, regu}}
 
   const muatAktif = useCallback(async () => {
     const d = await api('/api/absensi/aktif');
@@ -40,8 +41,21 @@ export default function AbsensiPage() {
     if (d.ok) setEvents(d.events || []);
   }, []);
 
+  // Load data MAC jamaah
+  const muatMacMap = useCallback(async () => {
+    try {
+      const d = await fetch('/api/pub/mac').then(r => r.json());
+      if (d.ok && d.daftar) {
+        const map = {};
+        d.daftar.forEach(j => { map[j.mac_tag] = { nama: j.nama, regu: j.regu }; });
+        macMapRef.current = map;
+      }
+    } catch (e) {}
+  }, []);
+
   useEffect(() => {
     (async () => {
+      await muatMacMap();
       const ev = await muatAktif();
       const d = await api('/api/absensi/event');
       if (d.ok) setEvents(d.events || []);
@@ -61,9 +75,19 @@ export default function AbsensiPage() {
     return () => clearInterval(t);
   }, [aktif, muatRekap]);
 
-  // Toast singkat saat jamaah hadir (tanpa popup, tanpa vibrate)
+  // Toast singkat saat jamaah hadir
   const tampilDeteksi = (nama, regu) => {
     tampilToast(`✅ ${nama}${regu ? ' (' + regu + ')' : ''} hadir`);
+  };
+
+  // Cari nama jamaah dari MAC
+  const cariNamaDariMac = (mac) => {
+    const jm = macMapRef.current[mac];
+    if (jm) return jm;
+    // Coba normalize MAC (uppercase)
+    const macUpper = mac?.toUpperCase();
+    if (macUpper && macMapRef.current[macUpper]) return macMapRef.current[macUpper];
+    return null;
   };
 
   // Start radar BLE
@@ -74,25 +98,22 @@ export default function AbsensiPage() {
       startBLE(serverUrl, rombonganId, {
         onDetected: (mac, rssi, name) => {
           console.log('[Absensi] Detected:', mac, name);
-          // Cek apakah jamaah ini sudah hadir sebelumnya
           if (!sudahHadirRef.current.has(mac)) {
             sudahHadirRef.current.add(mac);
-            // Cari nama jamaah dari rekap
-            const jm = rekap?.rows?.find(r => r.mac_tag === mac);
+            // Cari nama dari MAC map (bukan dari rekap!)
+            const jm = cariNamaDariMac(mac);
             if (jm) {
               tampilDeteksi(jm.nama, jm.regu);
             } else {
               tampilDeteksi(name || mac, '');
             }
           }
-          // Refresh rekap
           muatRekap(aktif?.id);
         },
         onStatus: (status) => console.log('[Absensi] Status:', status)
       });
       setRadarAktif(true);
     } else {
-      // Browser: gunakan fetch polling ke server
       setRadarAktif(true);
       pollDeteksi();
     }
@@ -108,7 +129,8 @@ export default function AbsensiPage() {
           for (const det of d.deteksi) {
             if (!sudahHadirRef.current.has(det.mac_tag)) {
               sudahHadirRef.current.add(det.mac_tag);
-              tampilPopup(det.jamaah_nama || det.mac_tag, det.regu || '');
+              const jm = cariNamaDariMac(det.mac_tag);
+              tampilDeteksi(jm?.nama || det.jamaah_nama || det.mac_tag, jm?.regu || det.regu || '');
             }
           }
         }
@@ -173,7 +195,6 @@ export default function AbsensiPage() {
         )}
       </div>
 
-      {/* Radar status */}
       {radarAktif && (
         <div className="bg-blue-50 border-2 border-blue-300 rounded-2xl p-3 flex items-center gap-3">
           <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse shrink-0"></div>
@@ -246,7 +267,6 @@ export default function AbsensiPage() {
         </div>
       )}
 
-      {/* Riwayat acara */}
       <div className="kartu p-4">
         <b className="text-hijau">🕘 Riwayat acara</b>
         <div className="mt-2 space-y-2">
