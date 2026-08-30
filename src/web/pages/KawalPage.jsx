@@ -146,18 +146,33 @@ export default function KawalPage() {
     const deviceLng = userLng.current;
     if (!deviceLat || !deviceLng) return;
 
-    // Hitung offset untuk setiap jamaah (agar tidak tumpang tindih)
+    // Hitung angle untuk setiap jamaah (agar tidak tumpang tindih)
     const angleStep = (2 * Math.PI) / Math.max(jmList.length, 1);
 
     jmList.forEach((m, idx) => {
       const s = status[m.id];
       if (!s) return;
 
-      // Posisi: gunakan posisi terakhir terdeteksi, atau posisi device dengan offset
-      let posisi = posisiRef.current[m.id];
-      if (!posisi) {
-        // Belum terdeteksi: tampilkan di dekat device dengan offset kecil
-        const offset = 0.0002; // ~20 meter
+      // Hitung posisi berdasarkan jarak RSSI
+      let posisi;
+      const jarak = s.rssi ? hitungJarak(s.rssi) : null;
+      
+      if (s.status === 'bersama' && jarak) {
+        // Terdeteksi: posisi berdasarkan jarak RSSI dari device
+        // Konversi meter ke derajat (approximate: 1 degree ≈ 111km)
+        const jarakMeter = Math.min(jarak, radius); // Cap di radius
+        const jarakDerajat = jarakMeter / 111000;
+        const angle = angleStep * idx;
+        posisi = {
+          lat: deviceLat + Math.sin(angle) * jarakDerajat,
+          lng: deviceLng + Math.cos(angle) * jarakDerajat
+        };
+      } else if (posisiRef.current[m.id]) {
+        // Pernah terdeteksi sebelumnya: pakai posisi terakhir
+        posisi = posisiRef.current[m.id];
+      } else {
+        // Belum pernah terdeteksi: tampilkan di dekat device
+        const offset = 0.0001; // ~10 meter
         const angle = angleStep * idx;
         posisi = {
           lat: deviceLat + Math.sin(angle) * offset,
@@ -179,7 +194,6 @@ export default function KawalPage() {
       }).addTo(mapRef.current);
 
       const waktuTerakhir = s.terakhir ? new Date(s.terakhir).toLocaleTimeString('id-ID') : '—';
-      const jarak = s.rssi ? hitungJarak(s.rssi) : null;
       marker.bindPopup(`
         <b>${m.nama}</b><br>
         ${m.regu || ''}<br>
