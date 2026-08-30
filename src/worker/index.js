@@ -829,9 +829,15 @@ async function tangani(request, env) {
     const jm = await DB.prepare('SELECT * FROM jamaah WHERE mac_tag=?').bind(mac).first();
     const jamaahId = jm ? jm.id : null;
     
-    // Simpan ke tabel deteksi
-    await DB.prepare('INSERT INTO deteksi (mac_tag, jamaah_id, device_id, lat, lng, rssi, sumber, waktu) VALUES (?,?,?,?,?,?,?,?)')
-      .bind(mac, jamaahId, b.device_id || '', b.lat || null, b.lng || null, rssi, b.sumber || 'native', nowISO()).run();
+    // Simpan ke tabel deteksi (lat/lng opsional, tabel mungkin belum punya kolom tsb)
+    try {
+      await DB.prepare('INSERT INTO deteksi (mac_tag, jamaah_id, device_id, lat, lng, rssi, sumber, waktu) VALUES (?,?,?,?,?,?,?,?)')
+        .bind(mac, jamaahId, b.device_id || '', b.lat || null, b.lng || null, rssi, b.sumber || 'native', nowISO()).run();
+    } catch (e) {
+      // Fallback: tabel lama tanpa lat/lng
+      await DB.prepare('INSERT INTO deteksi (mac_tag, jamaah_id, device_id, rssi, sumber, waktu) VALUES (?,?,?,?,?,?)')
+        .bind(mac, jamaahId, b.device_id || '', rssi, b.sumber || 'native', nowISO()).run();
+    }
     
     // Jika jamaah ditemukan, cek absensi (LANGSUNG HADIR jika RSSI > threshold)
     if (jm) {
