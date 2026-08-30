@@ -430,7 +430,7 @@ async function tangani(request, env) {
     let absensi = null;
     const ev = await DB.prepare('SELECT * FROM absensi_event WHERE ditutup=0 ORDER BY waktu DESC LIMIT 1').first();
     if (ev && rssi > RSSI_THRESHOLD) {
-      await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, waktu, oleh) VALUES (?,?,?,?,?,?,?)')
+      await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, waktu, oleh) VALUES (?,?,?,?,?,?)')
         .bind(ev.id, m.id, 'hadir', 'gelang', nowISO(), String(b.oleh || 'radar').slice(0, 40)).run();
       absensi = { hadir: true, acara: ev.nama };
     }
@@ -840,7 +840,7 @@ async function tangani(request, env) {
       const ev = await DB.prepare('SELECT * FROM absensi_event WHERE ditutup=0 ORDER BY waktu DESC LIMIT 1').first();
       if (ev && rssi > RSSI_THRESHOLD) {
         // Gelang terdeteksi dalam range → LANGSUNG HADIR (tanpa GPS check!)
-        await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, waktu, oleh) VALUES (?,?,?,?,?,?,?)')
+        await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, waktu, oleh) VALUES (?,?,?,?,?,?)')
           .bind(ev.id, jm.id, 'hadir', 'gelang', nowISO(), 'radar').run();
       }
     }
