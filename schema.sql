@@ -113,10 +113,12 @@ CREATE TABLE IF NOT EXISTS kawal_jamaah (
   rombongan_id TEXT NOT NULL,
   jamaah_id TEXT NOT NULL,
   mac_tag TEXT,
-  status TEXT DEFAULT 'tidak_terdeteksi',
+  status DEFAULT 'tidak_terdeteksi',
   rssi INTEGER,
   jarak_meter REAL,
   terakhir_terdeteksi TEXT,
+  lat REAL,
+  lng REAL,
   waktu TEXT NOT NULL
 );
 

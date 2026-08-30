@@ -878,11 +878,11 @@ async function tangani(request, env) {
         .bind(rombonganId, jm.id).first();
       
       if (existing) {
-        await DB.prepare('UPDATE kawal_jamaah SET status=?, rssi=?, terakhir_terdeteksi=?, lat=?, lng=?, waktu=? WHERE id=?')
-          .bind('bersama', d.rssi || null, nowISO(), b.lat || null, b.lng || null, nowISO(), existing.id).run();
+        await DB.prepare('UPDATE kawal_jamaah SET status=?, rssi=?, terakhir_terdeteksi=?, waktu=? WHERE id=?')
+          .bind('bersama', d.rssi || null, nowISO(), nowISO(), existing.id).run();
       } else {
-        await DB.prepare('INSERT INTO kawal_jamaah (rombongan_id, jamaah_id, mac_tag, status, rssi, terakhir_terdeteksi, lat, lng, waktu) VALUES (?,?,?,?,?,?,?,?,?)')
-          .bind(rombonganId, jm.id, mac, 'bersama', d.rssi || null, nowISO(), b.lat || null, b.lng || null, nowISO()).run();
+        await DB.prepare('INSERT INTO kawal_jamaah (rombongan_id, jamaah_id, mac_tag, status, rssi, terakhir_terdeteksi, waktu) VALUES (?,?,?,?,?,?,?)')
+          .bind(rombonganId, jm.id, mac, 'bersama', d.rssi || null, nowISO(), nowISO()).run();
       }
     }
     
@@ -941,8 +941,7 @@ async function tangani(request, env) {
       jamaah: jamaah.map(j => ({
         id: j.jamaah_id, nama: j.nama, regu: j.regu, mac: j.mac_tag,
         status: j.status, rssi: j.rssi,
-        terakhir: j.terakhir_terdeteksi,
-        lat: j.lat, lng: j.lng // Posisi terakhir terdeteksi
+        terakhir: j.terakhir_terdeteksi
       })),
       alert: alert.map(a => ({
         id: a.id, jamaah: a.nama, tipe: a.tipe, durasi: a.durasi_menit, waktu: a.waktu

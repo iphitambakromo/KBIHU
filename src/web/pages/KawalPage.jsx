@@ -163,12 +163,17 @@ export default function KawalPage() {
         const newStatus = {};
         const newAlerts = [];
 
-        // Update posisi dari server
-        (data.jamaah || []).forEach(j => {
-          if (j.lat && j.lng) {
-            posisiRef.current[j.id] = { lat: j.lat, lng: j.lng };
-          }
-        });
+    // Update posisi dari server (gunakan posisi device untuk semua jamaah)
+    const devicePosisi = data.posisi;
+    if (devicePosisi && devicePosisi.lat && devicePosisi.lng) {
+      // Semua jamaah yang bersama = posisi device
+      (data.jamaah || []).forEach(j => {
+        if (j.status === 'bersama') {
+          posisiRef.current[j.id] = { lat: devicePosisi.lat, lng: devicePosisi.lng };
+        }
+        // Untuk yang jauh, tetap gunakan posisi terakhir yang tersimpan
+      });
+    }
 
         // Proses status jamaah
         jmList.forEach(m => {
