@@ -20,6 +20,8 @@ export default function KawalPage() {
   const [statusMap, setStatusMap] = useState({});
   const [alerts, setAlerts] = useState([]);
   const [progress, setProgress] = useState(null); // {terdeteksi, total, persen}
+  const [reguList, setReguList] = useState([]);
+  const [pilihRegu, setPilihRegu] = useState(() => { try { return localStorage.getItem('iphi_rombongan') || ''; } catch { return ''; } });
 
   const petaRef = useRef(null);
   const mapRef = useRef(null);
@@ -33,11 +35,30 @@ export default function KawalPage() {
   const posisiRef = useRef({}); // {jamaahId: {lat, lng}} posisi terakhir terdeteksi
 
   useEffect(() => {
-    if (state?.jamaah) setJmList(state.jamaah.filter(m => m.punya_gelang));
-  }, [state]);
+    if (state?.jamaah) {
+      let filtered = state.jamaah.filter(m => m.punya_gelang);
+      if (pilihRegu) {
+        filtered = filtered.filter(m => m.regu === pilihRegu);
+      }
+      setJmList(filtered);
+    }
+  }, [state, pilihRegu]);
 
   // Save radius ke localStorage
   useEffect(() => { try { localStorage.setItem('iphi_kawal_radius', String(radius)); } catch {} }, [radius]);
+
+  // Save pilihRegu ke localStorage
+  useEffect(() => { try { localStorage.setItem('iphi_rombongan', pilihRegu); } catch {} }, [pilihRegu]);
+
+  // Load daftar regu
+  useEffect(() => {
+    (async () => {
+      try {
+        const d = await fetch('/api/pub/regu').then(r => r.json());
+        if (d.ok) setReguList(d.regu || []);
+      } catch (e) {}
+    })();
+  }, []);
 
   // Init map
   useEffect(() => {
@@ -158,6 +179,10 @@ export default function KawalPage() {
 
   // Mulai kawal
   const mulai = () => {
+    if (!pilihRegu) {
+      tampilToast('⚠️ Pilih rombongan terlebih dahulu', true);
+      return;
+    }
     setAktif(true);
     setAlerts([]);
     deteksiRef.current = {};
@@ -320,6 +345,20 @@ export default function KawalPage() {
 
         {/* Peta */}
         <div ref={petaRef} className="h-[250px] rounded-xl border border-slate-200" />
+
+        {/* Pilih Rombongan */}
+        <div>
+          <label className="text-[12px] font-bold text-slate-600">Rombongan</label>
+          <select
+            className="input mt-1"
+            value={pilihRegu}
+            onChange={e => setPilihRegu(e.target.value)}
+            disabled={aktif}
+          >
+            <option value="">— pilih rombongan —</option>
+            {reguList.map(r => <option key={r.id} value={r.nama}>{r.nama}</option>)}
+          </select>
+        </div>
 
         {/* Radius setting */}
         <div>
