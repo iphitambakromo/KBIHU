@@ -847,51 +847,46 @@ async function tangani(request, env) {
     return j({ ok: true, jamaah: jm ? jm.nama : null, jamaah_id: jamaahId });
   }
 
-  /* POST /api/pub/kawal — Native app kirim data kawal rombongan
-     Setiap 30 detik, native app mengirim posisi ketua + daftar jamaah terdeteksi. */
+  /* POST /api/pub/kawal — Native app kirim data kawal rombongan (Sederhana: BLE only, tanpa GPS check)
+     Setiap 30 detik, native app mengirim daftar jamaah terdeteksi via BLE.
+     Server simpan status: BERSAMA (terdeteksi) atau JAUH (tidak terdeteksi). */
   if (path === '/api/pub/kawal' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     const rombonganId = String(b.rombongan_id || '').trim();
     if (!rombonganId) return j({ ok: false, error: 'rombongan_id wajib' }, 400);
     
-    // Simpan log posisi rombongan
+    // Simpan log posisi rombongan (GPS device untuk visual peta)
     await DB.prepare('INSERT INTO kawal_log (rombongan_id, ketua_device, lat, lng, jumlah_deteksi, waktu) VALUES (?,?,?,?,?,?)')
       .bind(rombonganId, b.device_id || '', b.lat || null, b.lng || null, (b.deteksi || []).length, nowISO()).run();
     
-    // Update status tiap jamaah
+    // Update status tiap jamaah terdeteksi
     const deteksiList = b.deteksi || [];
     const macTerdeteksi = new Set();
+    const RSSI_THRESHOLD = -100; // Sangat lenient
     
     for (const d of deteksiList) {
       const mac = normMac(d.mac);
       if (!mac) continue;
+      if ((d.rssi || -100) < RSSI_THRESHOLD) continue; // Skip sinyal sangat lemah
       macTerdeteksi.add(mac);
       
       const jm = await DB.prepare('SELECT * FROM jamaah WHERE mac_tag=?').bind(mac).first();
       if (!jm) continue;
       
-      // Hitung jarak dari RSSI (estimasi: RSSI -50 = 1m, -70 = 10m, -90 = 100m)
-      const jarak = Math.round(Math.pow(10, (-50 - (d.rssi || -70)) / 20));
-      
-      // Upsert status jamaah
+      // Upsert status jamaah: BERSAMA
       const existing = await DB.prepare('SELECT id FROM kawal_jamaah WHERE rombongan_id=? AND jamaah_id=?')
         .bind(rombonganId, jm.id).first();
       
       if (existing) {
-        await DB.prepare('UPDATE kawal_jamaah SET status=?, rssi=?, jarak_meter=?, terakhir_terdeteksi=?, waktu=? WHERE id=?')
-          .bind('terdeteksi', d.rssi || null, jarak, nowISO(), nowISO(), existing.id).run();
+        await DB.prepare('UPDATE kawal_jamaah SET status=?, rssi=?, terakhir_terdeteksi=?, lat=?, lng=?, waktu=? WHERE id=?')
+          .bind('bersama', d.rssi || null, nowISO(), b.lat || null, b.lng || null, nowISO(), existing.id).run();
       } else {
-        await DB.prepare('INSERT INTO kawal_jamaah (rombongan_id, jamaah_id, mac_tag, status, rssi, jarak_meter, terakhir_terdeteksi, waktu) VALUES (?,?,?,?,?,?,?,?)')
-          .bind(rombonganId, jm.id, mac, 'terdeteksi', d.rssi || null, jarak, nowISO(), nowISO()).run();
-      }
-      
-      // Update posisi jamaah
-      if (Number.isFinite(b.lat) && Number.isFinite(b.lng)) {
-        await catatPosisi(DB, jm.id, b.lat, b.lng, 'kawal');
+        await DB.prepare('INSERT INTO kawal_jamaah (rombongan_id, jamaah_id, mac_tag, status, rssi, terakhir_terdeteksi, lat, lng, waktu) VALUES (?,?,?,?,?,?,?,?,?)')
+          .bind(rombonganId, jm.id, mac, 'bersama', d.rssi || null, nowISO(), b.lat || null, b.lng || null, nowISO()).run();
       }
     }
     
-    // Update jamaah yang TIDAK terdeteksi
+    // Update jamaah yang TIDAK terdeteksi → JAUH
     const semuaJamaahRegu = await DB.prepare('SELECT j.* FROM jamaah j WHERE j.regu=?')
       .bind(rombonganId.replace('regu-', '')).all();
     
@@ -902,12 +897,12 @@ async function tangani(request, env) {
         
         if (existing) {
           await DB.prepare('UPDATE kawal_jamaah SET status=?, waktu=? WHERE id=?')
-            .bind('tidak_terdeteksi', nowISO(), existing.id).run();
+            .bind('jauh', nowISO(), existing.id).run();
           
-          // Cek apakah sudah hilang > 5 menit
+          // Cek apakah sudah hilang > 3 menit → buat alert
           if (existing.terakhir_terdeteksi) {
             const menitLalu = (Date.now() - new Date(existing.terakhir_terdeteksi).getTime()) / 60000;
-            if (menitLalu > 5) {
+            if (menitLalu > 3) {
               const sudahAdaAlert = await DB.prepare('SELECT id FROM kawal_alert WHERE rombongan_id=? AND jamaah_id=? AND ditangani=0')
                 .bind(rombonganId, jm.id).first();
               if (!sudahAdaAlert) {
@@ -945,16 +940,17 @@ async function tangani(request, env) {
       posisi: logTerbaru ? { lat: logTerbaru.lat, lng: logTerbaru.lng, waktu: logTerbaru.waktu } : null,
       jamaah: jamaah.map(j => ({
         id: j.jamaah_id, nama: j.nama, regu: j.regu, mac: j.mac_tag,
-        status: j.status, rssi: j.rssi, jarak: j.jarak_meter,
-        terakhir: j.terakhir_terdeteksi
+        status: j.status, rssi: j.rssi,
+        terakhir: j.terakhir_terdeteksi,
+        lat: j.lat, lng: j.lng // Posisi terakhir terdeteksi
       })),
       alert: alert.map(a => ({
         id: a.id, jamaah: a.nama, tipe: a.tipe, durasi: a.durasi_menit, waktu: a.waktu
       })),
       statistik: {
         total: jamaah.length,
-        terdeteksi: jamaah.filter(j => j.status === 'terdeteksi').length,
-        hilang: jamaah.filter(j => j.status === 'tidak_terdeteksi').length,
+        bersama: jamaah.filter(j => j.status === 'bersama').length,
+        jauh: jamaah.filter(j => j.status === 'jauh').length,
         alert_aktif: alert.length
       }
     });
