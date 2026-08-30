@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api.js';
 import { pdfAbsensi } from '../lib/absensiPdf.js';
 import { useApp } from '../App.jsx';
-import { isNativeApp, startBLE, stopBLE, vibrate as nativeVibrate } from '../lib/nativeBridge.js';
+import { isNativeApp, startBLE, stopBLE } from '../lib/nativeBridge.js';
 
 export default function AbsensiPage() {
   const { sesi, tampilToast, bolehKelola } = useApp();
@@ -13,8 +13,6 @@ export default function AbsensiPage() {
   const [titikList, setTitikList] = useState([]);
   const [namaAcara, setNamaAcara] = useState('');
   const [radarAktif, setRadarAktif] = useState(false);
-  const [popup, setPopup] = useState(null); // {nama, regu, waktu}
-  const popupTimerRef = useRef(null);
   const sudahHadirRef = useRef(new Set()); // Track jamaah yang sudah hadir
 
   const muatAktif = useCallback(async () => {
@@ -63,14 +61,9 @@ export default function AbsensiPage() {
     return () => clearInterval(t);
   }, [aktif, muatRekap]);
 
-  // Tampilkan popup jamaah hadir
-  const tampilPopup = (nama, regu) => {
-    setPopup({ nama, regu, waktu: new Date().toLocaleTimeString('id-ID') });
-    if (popupTimerRef.current) clearTimeout(popupTimerRef.current);
-    popupTimerRef.current = setTimeout(() => setPopup(null), 3000);
-    // Vibrate
-    if (isNativeApp()) nativeVibrate('200');
-    else if (navigator.vibrate) navigator.vibrate(200);
+  // Toast singkat saat jamaah hadir (tanpa popup, tanpa vibrate)
+  const tampilDeteksi = (nama, regu) => {
+    tampilToast(`✅ ${nama}${regu ? ' (' + regu + ')' : ''} hadir`);
   };
 
   // Start radar BLE
@@ -87,9 +80,9 @@ export default function AbsensiPage() {
             // Cari nama jamaah dari rekap
             const jm = rekap?.rows?.find(r => r.mac_tag === mac);
             if (jm) {
-              tampilPopup(jm.nama, jm.regu);
+              tampilDeteksi(jm.nama, jm.regu);
             } else {
-              tampilPopup(name || mac, '');
+              tampilDeteksi(name || mac, '');
             }
           }
           // Refresh rekap
@@ -173,20 +166,6 @@ export default function AbsensiPage() {
     <div className="p-3 md:p-5 max-w-3xl mx-auto space-y-4 pb-10">
       <h1 className="text-2xl font-extrabold text-hijau">✅ Absensi</h1>
       <p className="text-slate-500 text-[13.5px] -mt-2">Mulai acara → radar otomatis aktif → jamaah terdeteksi = <b>HADIR</b>.</p>
-
-      {/* Popup jamaah hadir */}
-      {popup && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 animate-bounce">
-          <div className="bg-emerald-600 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3">
-            <span className="text-2xl">✅</span>
-            <div>
-              <b className="text-lg">{popup.nama}</b>
-              {popup.regu && <span className="text-emerald-200 text-sm ml-2">({popup.regu})</span>}
-              <div className="text-emerald-200 text-xs">HADIR · {popup.waktu}</div>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {bolehKelola && (

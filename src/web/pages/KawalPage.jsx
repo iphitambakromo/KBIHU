@@ -3,6 +3,15 @@ import L from 'leaflet';
 import { isNativeApp, startBLE, stopBLE, bunyikanGelang as nativeBunyikan, vibrate as nativeVibrate } from '../lib/nativeBridge.js';
 import { useApp } from '../App.jsx';
 
+// Hitung jarak dari RSSI (estimasi)
+const hitungJarak = (rssi) => {
+  if (!rssi || rssi === 0) return null;
+  // Rumus: jarak = 10^((-50 - RSSI) / 20)
+  // -50 dBm = referensi (1 meter)
+  const jarak = Math.pow(10, (-50 - rssi) / 20);
+  return Math.round(jarak);
+};
+
 export default function KawalPage() {
   const { state, tampilToast } = useApp();
   const [jmList, setJmList] = useState([]);
@@ -10,6 +19,7 @@ export default function KawalPage() {
   const [aktif, setAktif] = useState(false);
   const [statusMap, setStatusMap] = useState({});
   const [alerts, setAlerts] = useState([]);
+  const [progress, setProgress] = useState(null); // {terdeteksi, total, persen}
 
   const petaRef = useRef(null);
   const mapRef = useRef(null);
@@ -132,10 +142,12 @@ export default function KawalPage() {
       }).addTo(mapRef.current);
 
       const waktuTerakhir = s.terakhir ? new Date(s.terakhir).toLocaleTimeString('id-ID') : '—';
+      const jarak = s.rssi ? hitungJarak(s.rssi) : null;
       marker.bindPopup(`
         <b>${m.nama}</b><br>
         ${m.regu || ''}<br>
         Status: <b>${teksStatus}</b><br>
+        ${jarak ? 'Jarak: ~' + jarak + ' m<br>' : ''}
         Terakhir: ${waktuTerakhir}<br>
         ${s.rssi ? 'RSSI: ' + s.rssi : ''}
       `);
@@ -151,6 +163,7 @@ export default function KawalPage() {
     deteksiRef.current = {};
     posisiRef.current = {};
     setStatusMap({});
+    setProgress({ terdeteksi: 0, total: jmList.length, persen: 0 });
 
     // Poll status dari server setiap 3 detik
     tickRef.current = setInterval(async () => {
@@ -212,6 +225,14 @@ export default function KawalPage() {
 
         setStatusMap(newStatus);
         updateJamaahMarkers(newStatus);
+
+        // Update progress
+        const terdeteksi = Object.values(newStatus).filter(s => s.status === 'bersama').length;
+        setProgress({
+          terdeteksi,
+          total: jmList.length,
+          persen: Math.round((terdeteksi / jmList.length) * 100)
+        });
 
         // Alert + vibrate
         if (newAlerts.length > 0) {
@@ -352,6 +373,27 @@ export default function KawalPage() {
           </div>
         </div>
 
+        {/* Progress indicator */}
+        {aktif && progress && progress.total > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+            <div className="flex justify-between text-[12px] mb-1">
+              <span className="font-bold text-blue-700">📡 Mengidentifikasi gelang...</span>
+              <span className="font-mono text-blue-600">{progress.terdeteksi}/{progress.total}</span>
+            </div>
+            <div className="w-full bg-blue-200 rounded-full h-2">
+              <div
+                className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                style={{ width: `${progress.persen}%` }}
+              />
+            </div>
+            <p className="text-[11px] text-blue-500 mt-1">
+              {progress.terdeteksi < progress.total
+                ? `Estimasi: ${Math.round((progress.total - progress.terdeteksi) * 1.5)} detik lagi`
+                : '✅ Semua gelang teridentifikasi!'}
+            </p>
+          </div>
+        )}
+
         {/* Tombol Mulai/Henti */}
         <button
           className={`w-full btn ${aktif ? 'btn-merah' : 'btn-utama'} !min-h-[52px] !text-[16px]`}
@@ -402,8 +444,8 @@ export default function KawalPage() {
                 >
                   {m.regu ? m.regu + ' · ' : ''}
                   {teksStatus}
+                  {s?.rssi ? ' · ' + hitungJarak(s.rssi) + 'm' : ''}
                   {waktuTerakhir ? ' · ' + waktuTerakhir : ''}
-                  {s?.rssi ? ' · RSSI:' + s.rssi : ''}
                 </span>
               </div>
               <button
