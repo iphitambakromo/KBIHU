@@ -4,6 +4,7 @@ import { seed, skema, buatSandi, tokenAcak, idAcak, nowISO, jarakM } from './db.
 import { normMac } from '../lib/mac.js';
 
 const JSON_HDR = { 'content-type': 'application/json; charset=utf-8' };
+// v2.1 - fix lat/lng
 const j = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: JSON_HDR });
 
 async function catatGalat(DB, request, pesan) {
