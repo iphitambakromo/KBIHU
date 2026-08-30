@@ -1,0 +1,9 @@
+{
+  "name": "iphi-native",
+  "version": "3.4.0",
+  "private": true,
+  "description": "IPHI Native Android App - Tidak perlu build web",
+  "scripts": {
+    "build": "echo 'Native app - build via Android Studio / GitHub Actions'"
+  }
+}
