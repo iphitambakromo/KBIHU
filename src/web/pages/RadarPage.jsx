@@ -570,39 +570,19 @@ export default function RadarPage() {
         onDetected: (mac, rssi, name) => {
           console.log('Native BLE detected:', mac, rssi, name);
           
-          // Cek throttle (30 detik per device — lebih responsif)
+          // Cek throttle (30 detik per device)
           const kini = Date.now();
           if (terlapor.current[mac] && kini - terlapor.current[mac] < 30000) return;
           terlapor.current[mac] = kini;
           
           // Cari jamaah dari MAC
           const jm = macPetaRef.current[mac] || namaMapRef.current[mac];
-          tambahLog(jm 
-            ? `⏳ Melaporkan <b>${jm.nama}</b>${jm.regu ? ` (${jm.regu})` : ''}…` 
-            : `⏳ Melaporkan <b>${name || 'iTag'}</b>…`);
           
-          // Kirim ke server
-          const gpsPos = window._nativeLat && window._nativeLng ? { lat: window._nativeLat, lng: window._nativeLng } : null;
-          fetch('/api/pub/ble', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              macTag: mac,
-              nama: name || '',
-              lat: gpsPos?.lat,
-              lng: gpsPos?.lng,
-              oleh: 'native-radar',
-              rssi: rssi
-            })
-          }).then(r => r.json()).then(d => {
-            if (d.ok) {
-              tambahLog(`✅ <b>${d.jamaah}</b> tercatat${d.titik ? ' — di ' + d.titik : ''}${d.absensi?.hadir ? ' · <b>HADIR</b>' : ''}`);
-            } else {
-              tambahLog(`⚠️ ${name || 'iTag'} tidak terdaftar — tambah MAC di Kelola Jamaah`, true);
-            }
-          }).catch(e => {
-            tambahLog('❌ Gagal kirim — periksa internet', true);
-          });
+          // Native app sudah kirim data ke server via /api/pub/deteksi
+          // Web app hanya tampilkan di log
+          tambahLog(jm 
+            ? `✅ <b>${jm.nama}</b>${jm.regu ? ` (${jm.regu})` : ''} terdeteksi (RSSI: ${rssi})` 
+            : `📡 <b>${name || 'iTag'}</b> terdeteksi (MAC: ${mac}, RSSI: ${rssi})`);
         },
         onStatus: (status) => {
           console.log('Native BLE status:', status);

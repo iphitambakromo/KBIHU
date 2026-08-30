@@ -67,18 +67,9 @@ export default function AbsensiPage() {
       startBLE(serverUrl, rombonganId, {
         onDetected: (mac, rssi, name) => {
           console.log('[Absensi] Detected:', mac, name);
-          // Kirim ke server
-          const gpsPos = window._nativeLat && window._nativeLng ? { lat: window._nativeLat, lng: window._nativeLng } : null;
-          fetch('/api/pub/ble', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ macTag: mac, nama: name || '', lat: gpsPos?.lat, lng: gpsPos?.lng, oleh: 'absensi-radar', rssi })
-          }).then(r => r.json()).then(d => {
-            if (d.ok && d.absensi?.hadir) {
-              console.log('[Absensi] HADIR:', d.jamaah);
-              muatRekap(aktif?.id);
-            }
-          }).catch(() => {});
+          // Native app sudah kirim data ke server via /api/pub/deteksi
+          // Web app hanya refresh rekap untuk update UI
+          muatRekap(aktif?.id);
         },
         onStatus: (status) => console.log('[Absensi] Status:', status)
       });
