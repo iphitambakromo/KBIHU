@@ -425,6 +425,47 @@ class MainActivity : AppCompatActivity() {
         fun reload() {
             runOnUiThread { webView.reload() }
         }
+
+        @JavascriptInterface
+        fun cetakPDF(base64: String, filename: String) {
+            try {
+                // Decode base64 ke bytes
+                val pdfBytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+                
+                // Simpan ke file
+                val file = java.io.File(getExternalFilesDir(null), filename)
+                file.writeBytes(pdfBytes)
+                
+                Log.d(TAG, "PDF disimpan: ${file.absolutePath}")
+                
+                // Share PDF
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    this@MainActivity,
+                    "${packageName}.provider",
+                    file
+                )
+                
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/pdf"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, "Laporan Absensi IPHI")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                
+                runOnUiThread {
+                    try {
+                        startActivity(Intent.createChooser(shareIntent, "Bagikan PDF"))
+                    } catch (e: Exception) {
+                        Toast.makeText(this@MainActivity, "PDF disimpan: ${file.name}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Gagal cetak PDF", e)
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "Gagal cetak PDF: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     // ===== BLE Callbacks =====
