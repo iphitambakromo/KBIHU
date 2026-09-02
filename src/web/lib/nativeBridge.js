@@ -322,7 +322,9 @@ export const getServerUrl = () => {
   if (isNativeApp()) {
     return window.Android.getServerUrl();
   }
-  return localStorage.getItem('iphi_server_url') || 'https://kbihu.iphi-haji.workers.dev';
+  /* fix S8: default = origin tempat web app ini dimuat (web app disajikan oleh worker yang sama
+     dengan API-nya). Dulu hardcoded ke subdomain workers.dev tertentu — salah untuk deploy lain. */
+  return localStorage.getItem('iphi_server_url') || (typeof location !== 'undefined' ? location.origin : '');
 };
 
 export default {

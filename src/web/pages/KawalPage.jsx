@@ -286,12 +286,17 @@ export default function KawalPage() {
         setProgress({
           terdeteksi,
           total: jmList.length,
-          persen: Math.round((terdeteksi / jmList.length) * 100)
+          persen: jmList.length ? Math.round((terdeteksi / jmList.length) * 100) : 0  // fix M12: hindari NaN
         });
 
         // Alert + vibrate
         if (newAlerts.length > 0) {
-          setAlerts(prev => [...prev, ...newAlerts]);
+          // fix M11: dedup per jamaah — dulu alert yang sama ditambahkan ulang tiap tick 3 detik
+          setAlerts(prev => {
+            const peta = new Map(prev.map(a => [a.id, a]));
+            newAlerts.forEach(a => peta.set(a.id, a));
+            return [...peta.values()];
+          });
           if (isNativeApp()) {
             nativeVibrate('500,200,500,200,500');
           } else if (navigator.vibrate) {
@@ -305,7 +310,7 @@ export default function KawalPage() {
 
     // Start BLE scan via native bridge
     if (isNativeApp()) {
-      const serverUrl = localStorage.getItem('iphi_server_url') || 'https://kbihu.iphi-haji.workers.dev';
+      const serverUrl = localStorage.getItem('iphi_server_url') || location.origin;
       const rombonganId = localStorage.getItem('iphi_rombongan') || '';
       startBLE(serverUrl, rombonganId, {
         onDetected: (mac, rssi, name) => {
@@ -538,9 +543,9 @@ export default function KawalPage() {
           {alerts
             .slice(-10)
             .reverse()
-            .map((a, i) => (
+            .map((a) => (
               <div
-                key={i}
+                key={a.id}
                 className="text-[12px] text-red-700 bg-red-50 rounded-lg p-2"
               >
                 ❌ <b>{a.nama}</b> — hilang {a.menit} menit · {a.waktu}

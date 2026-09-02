@@ -11,7 +11,6 @@ const jarakM = (a, b) => {
   const x = Math.sin(dLa / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLo / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 };
-const RITUAL_NAMA = i => ['Hotel→Haram', 'Tawaf', "Sa'i", '→Mina', '→Arafah', '→Muzdalifah', '→Mina (Jumrah)', '→Haram (Ifadah)', "Tawaf Wada'"][i] || ('#' + (i + 1));
 
 export default function LatihanPage({ token }) {
   const [d, setD] = useState(null);          // profil + target + riwayat
@@ -51,6 +50,14 @@ export default function LatihanPage({ token }) {
     window.addEventListener('online', kirimOutbox);
     return () => window.removeEventListener('online', kirimOutbox);
   }, [token]);
+
+  /* fix: bersihkan watch GPS / wake lock / hook native saat meninggalkan halaman tanpa menekan Selesai */
+  useEffect(() => () => {
+    try { if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current); } catch (e) {}
+    try { wakeRef.current?.release(); } catch (e) {}
+    try { window._latihanGpsUpdate = null; } catch (e) {}
+    clearInterval(simRef.current);
+  }, []);
 
   /* ---------- peta ---------- */
   useEffect(() => {
@@ -102,55 +109,26 @@ export default function LatihanPage({ token }) {
     // wake lock: layar tetap menyala selama latihan (HP boleh di saku terbalik)
     navigator.wakeLock?.request('screen').then(w => { wakeRef.current = w; }).catch(() => {});
     
-    // Cek native GPS dulu
-    const isNative = typeof window !== 'undefined' && typeof window.Android !== 'undefined';
-    
-    if (isNative && window._nativeLat && window._nativeLng && window._nativeLat !== 0) {
-      // Gunakan native GPS
-      const c = { latitude: window._nativeLat, longitude: window._nativeLng, accuracy: window._nativeAcc || 20 };
-      posRef.current = { lat: c.latitude, lng: c.longitude };
-      tanda.current?.setLatLng([c.latitude, c.longitude]);
-      if (map.current) map.current.panTo([c.latitude, c.longitude]);
-      setGpsInfo(`✅ GPS aktif (±${Math.round(c.accuracy)} m) — jalan dulu, angka bertambah sendiri`);
-      
-      // Update dari native GPS callback
-      window._latihanGpsUpdate = (lat, lng, acc) => {
-        posRef.current = { lat, lng };
-        tanda.current?.setLatLng([lat, lng]);
-        if (map.current) map.current.panTo([lat, lng]);
-        // Proses GPS seperti biasa
-        const L0 = lt.current;
-        if (!L0.akhir) { L0.akhir = { lat, lng, ts: Date.now() }; perbaruiRute(lat, lng); return; }
-        const dJ = jarakM(L0.akhir, { lat, lng });
-        const dt = (Date.now() - L0.akhir.ts) / 1000;
-        const v = dt > 0 ? dJ / dt : 9;
-        const minM = Math.max(6, acc * 0.7);
-        if (dJ >= minM && v > 0.2 && v < 3.2) {
-          L0.akhir = { lat, lng, ts: Date.now() };
-          L0.lastGerak = Date.now();
-          perbaruiRute(lat, lng);
-        }
-      };
-    } else {
-      // Fallback ke browser geolocation
-      watchRef.current = navigator.geolocation.watchPosition(p => {
-      const c = p.coords, ak = c.accuracy || 30;
-      posRef.current = { lat: c.latitude, lng: c.longitude };
-      tanda.current?.setLatLng([c.latitude, c.longitude]);
-      if (!map.current) return;
-      const pNext = map.current.getCenter();
-      if (jarakM({ lat: pNext.lat, lng: pNext.lng }, { lat: c.latitude, lng: c.longitude }) > 3) map.current.panTo([c.latitude, c.longitude]);
-      if (ak > 45) { setGpsInfo(`📡 Sinyal lemah (±${Math.round(ak)} m) — jalan ke tempat lebih terbuka…`); return; }
+    /* fix K3: SATU pemroses titik untuk mode native & browser.
+       Dulu cabang native tidak pernah memanggil setMeter → angka latihan selalu 0 di aplikasi. */
+    const prosesTitik = (lat, lng, acc, ts) => {
+      posRef.current = { lat, lng };
+      tanda.current?.setLatLng([lat, lng]);
+      if (map.current) {
+        const pNext = map.current.getCenter();
+        if (jarakM({ lat: pNext.lat, lng: pNext.lng }, { lat, lng }) > 3) map.current.panTo([lat, lng]);
+      }
+      if (acc > 45) { setGpsInfo(`📡 Sinyal lemah (±${Math.round(acc)} m) — jalan ke tempat lebih terbuka…`); return; }
       const L0 = lt.current;
-      if (!L0.akhir) { L0.akhir = { lat: c.latitude, lng: c.longitude, ts: p.timestamp }; perbaruiRute(c.latitude, c.longitude); setGpsInfo(`✅ GPS aktif (±${Math.round(ak)} m) — jalan dulu, angka bertambah sendiri`); return; }
-      const dJ = jarakM(L0.akhir, { lat: c.latitude, lng: c.longitude });
-      const dt = (p.timestamp - L0.akhir.ts) / 1000;
+      if (!L0.akhir) { L0.akhir = { lat, lng, ts }; perbaruiRute(lat, lng); setGpsInfo(`✅ GPS aktif (±${Math.round(acc)} m) — jalan dulu, angka bertambah sendiri`); return; }
+      const dJ = jarakM(L0.akhir, { lat, lng });
+      const dt = (ts - L0.akhir.ts) / 1000;
       const v = dt > 0 ? dJ / dt : 9;
-      const minM = Math.max(6, ak * 0.7);
+      const minM = Math.max(6, acc * 0.7);
       if (dJ >= minM && v > 0.2 && v < 3.2) {
-        L0.akhir = { lat: c.latitude, lng: c.longitude, ts: p.timestamp };
+        L0.akhir = { lat, lng, ts };
         L0.lastGerak = Date.now();
-        perbaruiRute(c.latitude, c.longitude);
+        perbaruiRute(lat, lng);
         setMeter(m => {
           const nm = m + dJ;
           const pct = nm / t.target_m;
@@ -173,10 +151,26 @@ export default function LatihanPage({ token }) {
       } else if (Date.now() - L0.lastGerak > 120000) {
         setGpsInfo('💤 Istirahat terdeteksi — santai dulu, lanjut lagi kapan saja. (Waktu istirahat tidak dihitung waktu aktif)');
       }
-    }, err => {
-      setGpsInfo(err.code === 1 ? '🔒 Akses lokasi DITOLAK — ketuk ikon gembok di address bar → Izinkan → muat ulang.' :
-        err.code === 3 ? '⏱ GPS lama merespons — mulai lagi di ruang terbuka.' : '⚠️ GPS gagal: ' + err.message);
-    }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
+    };
+
+    const isNative = typeof window !== 'undefined' && typeof window.Android !== 'undefined';
+    if (isNative) {
+      /* GPS native: hook dipanggil oleh gps.js (terimaGpsNative) setiap Android mengirim update */
+      window._latihanGpsUpdate = (lat, lng, acc) => prosesTitik(lat, lng, Number(acc) || 20, Date.now());
+      if (window._nativeLat && window._nativeLng && window._nativeLat !== 0) {
+        prosesTitik(window._nativeLat, window._nativeLng, window._nativeAcc || 20, Date.now());
+      } else {
+        setGpsInfo('📡 Menunggu fix GPS dari IPHI App… pastikan aplikasi berjalan & izin lokasi diberikan.');
+      }
+    } else {
+      // Browser geolocation
+      watchRef.current = navigator.geolocation.watchPosition(p => {
+        const c = p.coords;
+        prosesTitik(c.latitude, c.longitude, c.accuracy || 30, p.timestamp);
+      }, err => {
+        setGpsInfo(err.code === 1 ? '🔒 Akses lokasi DITOLAK — ketuk ikon gembok di address bar → Izinkan → muat ulang.' :
+          err.code === 3 ? '⏱ GPS lama merespons — mulai lagi di ruang terbuka.' : '⚠️ GPS gagal: ' + err.message);
+      }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
     }
   };
 
@@ -188,10 +182,15 @@ export default function LatihanPage({ token }) {
   const selesai = async (klaim) => {
     if (!aktif) return;
     if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current);
+    watchRef.current = null;
+    window._latihanGpsUpdate = null;   // fix K3: lepas hook GPS native
     try { wakeRef.current?.release(); } catch (e) {}
     clearInterval(simRef.current);
     const capai = klaim || meter >= aktif.target;
-    await kirim({ token, ritual: aktif.ritual, jarakM: Math.round(meter), durasiS: Math.round((Date.now() - lt.current.t0) / 1000), aktifS: aktifS(), selesai: capai });
+    /* fix K2: kirim SISA jarak yang belum ter-checkpoint. Dulu total penuh dikirim lagi padahal
+       tiap 500 m sudah ada baris checkpoint → server (SUM) menghitung jarak hampir 2× lipat. */
+    const sisa = Math.max(0, Math.round(meter - lt.current.cpTerkirim));
+    await kirim({ token, ritual: aktif.ritual, jarakM: sisa, durasiS: Math.round((Date.now() - lt.current.t0) / 1000), aktifS: aktifS(), selesai: capai });
     setPesan(capai ? `🎉 Tersimpan: ${Math.round(meter).toLocaleString('id-ID')} m — ${aktif.judul} TERCAPAI!` :
       `✅ Tersimpan ${Math.round(meter).toLocaleString('id-ID')} m dari ${aktif.target.toLocaleString('id-ID')} m — pelan-pelan, rutin saja.`);
     setAktif(null); setMeter(0);

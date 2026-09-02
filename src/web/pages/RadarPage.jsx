@@ -69,6 +69,11 @@ export default function RadarPage() {
   const terlapor = useRef({});
   const scanHandle = useRef(null);
   const cariScanRef = useRef(null);
+  /* fix M6: simpan instance listener yang benar-benar dipasang agar bisa dilepas lagi
+     (dulu listener anonim/pasangListener per-render tak pernah bisa di-remove → bocor) */
+  const scanListenerRef = useRef(null);
+  const cariListenerRef = useRef(null);
+  const pasangListenerAktifRef = useRef(null);
   const cariRef = useRef(null);   // akses cari di dalam event listener (hindari closure stale)
   const getarRef = useRef(null);
   const bunyiRef = useRef(0);
@@ -142,6 +147,11 @@ export default function RadarPage() {
     try { scanHandle.current?.stop(); } catch (e) {}
     try { cariScanRef.current?.stop(); } catch (e) {}
     try { pasangScanRef.current?.stop(); } catch (e) {}
+    /* fix M6: lepas semua listener advertisementreceived saat unmount */
+    try { if (scanListenerRef.current) navigator.bluetooth?.removeEventListener('advertisementreceived', scanListenerRef.current); } catch (e) {}
+    try { if (cariListenerRef.current) navigator.bluetooth?.removeEventListener('advertisementreceived', cariListenerRef.current); } catch (e) {}
+    try { if (pasangListenerAktifRef.current) navigator.bluetooth?.removeEventListener('advertisementreceived', pasangListenerAktifRef.current); } catch (e) {}
+    scanListenerRef.current = null; cariListenerRef.current = null; pasangListenerAktifRef.current = null;
   }, []);
   useEffect(() => {
     const h = (ev) => {
@@ -292,7 +302,7 @@ export default function RadarPage() {
   const mulaiCariScan = async (beaconId, macTag) => {
     // Mode Native: gunakan native bridge
     if (isNativeApp()) {
-      const serverUrl = localStorage.getItem('iphi_server_url') || 'https://kbihu.iphi-haji.workers.dev';
+      const serverUrl = localStorage.getItem('iphi_server_url') || location.origin;
       const rombonganId = localStorage.getItem('iphi_rombongan') || '';
       
       startBLE(serverUrl, rombonganId, {
@@ -326,7 +336,9 @@ export default function RadarPage() {
     const kodeCari = new Set(String(beaconId || '').split(',').map(s => s.trim()).filter(Boolean));
     try {
       cariScanRef.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
-      navigator.bluetooth.addEventListener('advertisementreceived', ev => {
+      /* fix M6: listener disimpan di ref supaya bisa dilepas di hentiCariScan/unmount */
+      if (cariListenerRef.current) { try { navigator.bluetooth.removeEventListener('advertisementreceived', cariListenerRef.current); } catch (e) {} }
+      const listener = (ev) => {
         if (!cariRef.current) return;
         const id = ev.device.id || ev.device.name;
         const nm = normMac(ev.device?.name);
@@ -339,7 +351,9 @@ export default function RadarPage() {
         setCariStatus(info.label);
         navigator.vibrate?.(info.vibrate);
         savedDeviceRef.current = ev.device;
-      });
+      };
+      cariListenerRef.current = listener;
+      navigator.bluetooth.addEventListener('advertisementreceived', listener);
     } catch (e) {
       if (e.name === 'NotAllowedError') {
         setCariStatus('⚠️ Izin Bluetooth ditolak — buka pengaturan browser dan izinkan Bluetooth');
@@ -354,6 +368,11 @@ export default function RadarPage() {
     } else {
       try { cariScanRef.current?.stop(); } catch (e) {}
       cariScanRef.current = null;
+      /* fix M6: lepas listener mode cari */
+      if (cariListenerRef.current) {
+        try { navigator.bluetooth?.removeEventListener('advertisementreceived', cariListenerRef.current); } catch (e) {}
+        cariListenerRef.current = null;
+      }
     }
     navigator.vibrate?.(0);
   };
@@ -442,10 +461,16 @@ export default function RadarPage() {
     hentiCariScan();
     vibrate('800');
     try {
-      const pos = await new Promise(res => navigator.geolocation.getCurrentPosition(p => res({ lat: p.coords.latitude, lng: p.coords.longitude }), () => res(null), { enableHighAccuracy: true, timeout: 8000 }));
+      /* fix S3: di mode native pakai GPS native (geolocation web sering tak tersedia di WebView) */
+      let pos = (window._nativeLat && window._nativeLng && window._nativeLat !== 0)
+        ? { lat: window._nativeLat, lng: window._nativeLng }
+        : null;
+      if (!pos) pos = await new Promise(res => navigator.geolocation?.getCurrentPosition(p => res({ lat: p.coords.latitude, lng: p.coords.longitude }), () => res(null), { enableHighAccuracy: true, timeout: 8000 }) || res(null));
       const r = await fetch('/api/pub/cari-selesai', { method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ jamaahId: cari.id, lat: pos?.lat, lng: pos?.lng, oleh: 'pencari' }) }).then(x => x.json());
-      tambahLog(`🎯 <b>${cari.nama} DITEMUKAN!</b> Posisi tercatat di dashboard.`);
+      /* fix S3: periksa r.ok — dulu pesan "DITEMUKAN" tampil walau server menolak (mis. 400 GPS diperlukan) */
+      if (r.ok) tambahLog(`🎯 <b>${cari.nama} DITEMUKAN!</b> Posisi tercatat di dashboard.`);
+      else tambahLog('⚠️ Gagal mencatat: ' + (r.error || 'server menolak') + (pos ? '' : ' — GPS tidak terbaca'), true);
     } catch (e) { tambahLog('⚠️ Gagal mencatat — cek koneksi', true); }
     setCari(null); setSinyal(null); setCariStatus('');
   };
@@ -563,7 +588,7 @@ export default function RadarPage() {
         return;
       }
       
-      const serverUrl = localStorage.getItem('iphi_server_url') || 'https://kbihu.iphi-haji.workers.dev';
+      const serverUrl = localStorage.getItem('iphi_server_url') || location.origin;
       const rombonganId = localStorage.getItem('iphi_rombongan') || '';
       
       const result = startBLE(serverUrl, rombonganId, {
@@ -606,12 +631,18 @@ export default function RadarPage() {
       tambahLog(`⚠️ ${deteksiBrowser} tidak mendukung scan BLE. Gunakan <b>IPHI App</b> untuk scan otomatis.`, true); 
       return; 
     }
-    if (scanHandle.current) { scanHandle.current.stop(); scanHandle.current = null; setScanAktif(false); tambahLog('⏹ Dihentikan'); return; }
+    if (scanHandle.current) { scanHandle.current.stop(); scanHandle.current = null; setScanAktif(false); tambahLog('⏹ Dihentikan');
+      /* fix M6: lepas listener scan radar saat dihentikan */
+      if (scanListenerRef.current) { try { navigator.bluetooth.removeEventListener('advertisementreceived', scanListenerRef.current); } catch (e) {} scanListenerRef.current = null; }
+      return; }
     try {
       scanHandle.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
       setScanAktif(true);
       tambahLog('🟢 Memindai… biarkan layar menyala.');
-      navigator.bluetooth.addEventListener('advertisementreceived', ev => lapor(ev.device, ev.rssi, ev));
+      /* fix M6: listener disimpan di ref (dulu anonim & tak pernah dilepas → ganda tiap sesi scan) */
+      if (scanListenerRef.current) { try { navigator.bluetooth.removeEventListener('advertisementreceived', scanListenerRef.current); } catch (e) {} }
+      scanListenerRef.current = (ev) => lapor(ev.device, ev.rssi, ev);
+      navigator.bluetooth.addEventListener('advertisementreceived', scanListenerRef.current);
     } catch (e) { 
       if (e.name === 'NotAllowedError') {
         tambahLog('⚠️ Izin Bluetooth ditolak — buka pengaturan browser dan izinkan Bluetooth', true);
@@ -662,6 +693,9 @@ export default function RadarPage() {
       try {
         // Gunakan requestLEScan — izin hanya diminta SEKALI
         pasangScanRef.current = await navigator.bluetooth.requestLEScan({ acceptAllAdvertisements: true });
+        /* fix M6: pasangListener dibuat ulang tiap render — simpan instance yang BENAR-BENAR dipasang
+           agar batalkanPasang bisa melepaskannya (dulu removeEventListener selalu gagal → bocor) */
+        pasangListenerAktifRef.current = pasangListener;
         navigator.bluetooth.addEventListener('advertisementreceived', pasangListener);
       } catch (e) { 
         batalkanPasang(); 
@@ -678,7 +712,11 @@ export default function RadarPage() {
     setPasangOtomatisA(false);
     try { pasangScanRef.current?.stop(); } catch (e) {}
     pasangScanRef.current = null;
-    try { navigator.bluetooth?.removeEventListener('advertisementreceived', pasangListener); } catch (e) {}
+    /* fix M6: lepas instance listener yang tersimpan (bukan instance render ini) */
+    if (pasangListenerAktifRef.current) {
+      try { navigator.bluetooth?.removeEventListener('advertisementreceived', pasangListenerAktifRef.current); } catch (e) {}
+      pasangListenerAktifRef.current = null;
+    }
   }
 
   async function pasangkan() {

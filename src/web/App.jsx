@@ -29,7 +29,8 @@ function Login({ onOk }) {
     try {
       const d = await api('/api/login', { method: 'POST', body: JSON.stringify({ user, sandi }) });
       if (!d.ok) setErr(d.error || 'gagal'); else { localStorage.setItem('iphi_tok', d.token); onOk(d); }
-    } finally { setTunggu(false); }
+    } catch (e) { setErr('Tidak dapat menghubungi server — periksa koneksi'); }
+    finally { setTunggu(false); }
   };
   return (
     <div className="min-h-full flex items-center justify-center p-4 bg-gradient-to-br from-hijau to-hijau2">
@@ -91,7 +92,7 @@ export default function App() {
       // Halaman form tak terpengaruh (rute form tak di-poll).
       const sig = JSON.stringify([
         d.sesi?.id,
-        (d.jamaah || []).map(m => [m.id, m.nama, m.regu, m.paspor, m.hotel, m.catatan, m.punya_hp, m.punya_gelang, m.beacon_id, m.mac_tag, m.sosAktif, m.poisoni?.waktu]),
+        (d.jamaah || []).map(m => [m.id, m.nama, m.regu, m.paspor, m.hotel, m.catatan, m.punya_hp, m.punya_gelang, m.beacon_id, m.mac_tag, m.sosAktif, m.posisi?.waktu, m.posisi?.lat, m.posisi?.lng, m.titik]),
         (d.titik || []).map(t => [t.id, t.nama, t.lat, t.lng, t.radius]),
         (d.kejadian || []).map(k => [k.id, k.tipe, k.ditangani]),
         d.stat
@@ -148,9 +149,11 @@ export default function App() {
   const namaDefaultTag = (nm) => /^(itag|itag\s+baru)$/i.test(String(nm || '').trim());
   const cocokTag = (m, ev) => {
     if (!m.beacon_id) return false;
+    /* fix S2: beacon_id bisa DAFTAR kode dipisah koma (multi-HP) — samakan dengan logika kodeBaris di worker */
+    const kode = String(m.beacon_id).split(',').map(x => x.trim()).filter(Boolean);
     const id = ev.device.id || '', nm = ev.device.name || '';
-    if (id && id === m.beacon_id) return true;                       // kode per-HP (pasang di HP ini)
-    if (nm && !namaDefaultTag(m.beacon_id) && nm === m.beacon_id) return true; // nama unik (global)
+    if (id && kode.includes(id)) return true;                                   // kode per-HP (pasang di HP ini)
+    if (nm && kode.some(k => !namaDefaultTag(k) && k === nm)) return true;      // nama unik (global)
     return false;
   };
   const bunyikanDevice = async (device) => {
@@ -252,10 +255,10 @@ export default function App() {
             : ruteBersih === 'jamaah' ? <div className="flex-1 overflow-y-auto"><JamaahPage /></div>
             : ruteBersih === 'progres' ? <div className="flex-1 overflow-y-auto"><ProgresPage /></div>
             : ruteBersih === 'kelola' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><KelolaPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
-            : rute === 'pengguna' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><PenggunaPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
-            : rute === 'diag' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><DiagPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
-            : rute === 'pengaturan' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><PengaturanPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
-            : rute === 'cetak' ? (
+            : ruteBersih === 'pengguna' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><PenggunaPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
+            : ruteBersih === 'diag' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><DiagPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
+            : ruteBersih === 'pengaturan' ? (sesi.peran === 'admin' ? <div className="flex-1 overflow-y-auto"><PengaturanPage /></div> : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin</div>)
+            : ruteBersih === 'cetak' ? (
             sesi.peran === 'admin' || sesi.peran === 'ketrom' ? <div className="flex-1 overflow-y-auto"><CetakPage /></div>
             : <div className="flex-1 grid place-items-center text-slate-500 font-bold">🔒 Khusus Admin / KaRom</div>
           ) : (
@@ -331,7 +334,7 @@ export default function App() {
                         })()}
                       </div>
                       <div className="flex gap-1.5">
-                        {m.punya_gelang && m.punya_gelang && (
+                        {m.punya_gelang && (m.beacon_id || m.mac_tag) && (
                           <a className="btn btn-merah !min-h-[38px] !px-3 !text-[11.5px] animate-pulse" href={'#/radar?cari=' + encodeURIComponent(m.id)} title="Cari jamaah ini">🔍</a>
                         )}
                         {m.punya_gelang && m.beacon_id && <button className="btn btn-utama !min-h-[38px] !px-3 !text-[11.5px]" disabled={beepBusy} title="Bunyikan iTag jamaah ini (tag bunyi saat tersambung)" onClick={() => bunyiJamaah(m)}>🔊</button>}

@@ -110,7 +110,7 @@ async function tangani(request, env) {
     }
     const kejadian = (await DB.prepare('SELECT k.*, j.nama FROM kejadian k LEFT JOIN jamaah j ON j.id=k.jamaah_id WHERE k.sesi_id=? ORDER BY k.id DESC LIMIT 20').bind(sesi.id).all()).results || [];
     return j({ ok: true, sesi, titik, jamaah: jmFinal,
-      stat: { total: jamaah.length, gelang: jamaah.filter(m => m.punya_gelang).length },
+      stat: { total: jamaah.length, gelang: jamaah.filter(m => m.punya_gelang).length, sosAktif: jmFinal.filter(m => m.sosAktif).length },  // fix M5: badge 🆘 di peta butuh stat.sosAktif
       kejadian,
       anda: { peran: USER.peran, nama: USER.nama || USER.username, regu: USER.regu || '' } });
   }
@@ -182,12 +182,16 @@ async function tangani(request, env) {
   async function catatPosisi(DB2, jamaahId, lat, lng, sumber) {
     const sesi = await DB2.prepare("SELECT id FROM sesi WHERE tipe='tracking' AND status='aktif' ORDER BY waktu DESC LIMIT 1").first();
     const sesiId = sesi ? sesi.id : 'trk1';
-    await DB2.prepare('INSERT INTO posisi (sesi_id, jamaah_id, lat, lng, akurasi, sumber, waktu) VALUES (?,?,?,?,?,?,?)')
-      .bind(sesiId, jamaahId, lat, lng, 20, sumber, nowISO()).run();
-    const tk = await titikSesi(sesiId);
-    const dm = dalamTitikMana(tk, lat, lng);
+    /* fix K7: koordinat tidak valid (null/NaN) tidak lagi dipalsukan — kejadian tetap dicatat tanpa baris posisi */
+    const adaPos = Number.isFinite(lat) && Number.isFinite(lng);
+    if (adaPos) {
+      await DB2.prepare('INSERT INTO posisi (sesi_id, jamaah_id, lat, lng, akurasi, sumber, waktu) VALUES (?,?,?,?,?,?,?)')
+        .bind(sesiId, jamaahId, lat, lng, 20, sumber, nowISO()).run();
+    }
+    const tk = adaPos ? await titikSesi(sesiId) : [];
+    const dm = adaPos ? dalamTitikMana(tk, lat, lng) : null;
     const kej = [];
-    if (sumber === 'sos') kej.push(['sos', dm ? dm.t.nama : null, 'Tombol SOS ditekan jamaah']);
+    if (sumber === 'sos') kej.push(['sos', dm ? dm.t.nama : null, adaPos ? 'Tombol SOS ditekan jamaah' : 'Tombol SOS ditekan jamaah (tanpa GPS)']);
     if (sumber === 'checkin') kej.push(['checkin', dm ? dm.t.nama : null, dm ? 'Check-in di ' + dm.t.nama : 'Check-in (di luar titik)']);
     if (dm) kej.push(['masuk_titik', dm.t.nama, 'Terdeteksi di titik ' + dm.t.nama]);
     for (const k of kej) {
@@ -225,10 +229,11 @@ async function tangani(request, env) {
     const b = await request.json().catch(() => ({}));
     const m = await DB.prepare('SELECT * FROM jamaah WHERE id=?').bind(String(b.jamaahId || '')).first();
     if (!m) return j({ ok: false, error: 'jamaah tidak dikenali' }, 404);
-    const lat = Number.isFinite(b.lat) ? b.lat : -6.9932, lng = Number.isFinite(b.lng) ? b.lng : 110.4203;
+    /* fix K7: TANPA koordinat fallback palsu (dulu hardcoded Semarang) — SOS tanpa GPS tetap tercatat sebagai kejadian */
+    const lat = Number.isFinite(b.lat) ? b.lat : null, lng = Number.isFinite(b.lng) ? b.lng : null;
     const r = await catatPosisi(DB, m.id, lat, lng, 'sos');
     const wk = await waKetua(m.regu);
-    return j({ ok: true, jamaah: m.nama, regu: m.regu, titik: r.titik, waKetua: wk ? wk.wa : '', waKetuaNama: wk ? wk.nama : '' });
+    return j({ ok: true, jamaah: m.nama, regu: m.regu, titik: r.titik, tanpaGps: lat == null, waKetua: wk ? wk.wa : '', waKetuaNama: wk ? wk.nama : '' });
   }
 
   /* auth: tandai SOS selesai (per jamaah / semua) */
@@ -277,8 +282,16 @@ async function tangani(request, env) {
   }
   if (path === '/api/absensi/tutup' && method === 'POST') {
     if (!USER) return tolak();
+    // fix S10: dulu TANPA cek peran — user ter-login mana pun bisa menutup acara regu lain
+    if (!bolehKelola()) return j({ ok: false, error: 'hanya Admin / KaRom / KaRu' }, 403);
     const b = await request.json().catch(() => ({}));
-    await DB.prepare('UPDATE absensi_event SET ditutup=1 WHERE id=?').bind(String(b.id || '')).run();
+    const ev = await DB.prepare('SELECT * FROM absensi_event WHERE id=?').bind(String(b.id || '')).first();
+    if (!ev) return j({ ok: false, error: 'acara tidak ditemukan' }, 404);
+    if (USER.peran === 'ketua-regu') {
+      const er = String(ev.regu || '').trim(), ur = String(USER.regu || '').trim();
+      if (!er || er !== ur) return j({ ok: false, error: 'di luar regu Anda' }, 403);
+    }
+    await DB.prepare('UPDATE absensi_event SET ditutup=1 WHERE id=?').bind(ev.id).run();
     return j({ ok: true });
   }
   if (path === '/api/absensi/hapus' && method === 'POST') {
@@ -414,22 +427,25 @@ async function tangani(request, env) {
     
     // RSSI threshold (sangat lenient: -100 dBm = hampir semua deteksi = HADIR)
     const RSSI_THRESHOLD = -100;
-    const rssi = Number(b.rssi) || -100;
+    // fix M20: parsing RSSI yang benar (0/NaN tidak lagi dianggap -100 secara keliru)
+    const rssi = Number.isFinite(Number(b.rssi)) ? Number(b.rssi) : -100;
     
     // Catat posisi (GPS opsional, tidak wajib)
     const lat = Number.isFinite(b.lat) ? b.lat : null;
     const lng = Number.isFinite(b.lng) ? b.lng : null;
-    if (lat && lng) {
+    if (lat != null && lng != null) {  // fix M1: dulu `if (lat && lng)` — koordinat 0 dianggap kosong
       await catatPosisi(DB, m.id, lat, lng, 'ble');
     }
     
+    // fix M2: gunakan sesi tracking aktif (bukan hardcoded 'trk1') agar konsisten dengan posisi
+    const sesiAktif = await DB.prepare("SELECT id FROM sesi WHERE tipe='tracking' AND status='aktif' ORDER BY waktu DESC LIMIT 1").first();
     await DB.prepare('INSERT INTO kejadian (sesi_id, jamaah_id, tipe, zona_titik, keterangan, waktu) VALUES (?,?,?,?,?,?)')
-      .bind('trk1', m.id, 'ble', null, `Gelang terlihat radar HP${b.oleh ? ' (' + String(b.oleh).slice(0, 40) + ')' : ''}`, nowISO()).run();
+      .bind(sesiAktif ? sesiAktif.id : 'trk1', m.id, 'ble', null, `Gelang terlihat radar HP${b.oleh ? ' (' + String(b.oleh).slice(0, 40) + ')' : ''}`, nowISO()).run();
     
-    // absensi: LANGSUNG HADIR jika RSSI > threshold (tanpa GPS check!)
+    // absensi: LANGSUNG HADIR jika RSSI >= threshold (tanpa GPS check!)
     let absensi = null;
     const ev = await DB.prepare('SELECT * FROM absensi_event WHERE ditutup=0 ORDER BY waktu DESC LIMIT 1').first();
-    if (ev && rssi > RSSI_THRESHOLD) {
+    if (ev && rssi >= RSSI_THRESHOLD) {
       await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, waktu, oleh) VALUES (?,?,?,?,?,?)')
         .bind(ev.id, m.id, 'hadir', 'gelang', nowISO(), String(b.oleh || 'radar').slice(0, 40)).run();
       absensi = { hadir: true, acara: ev.nama };
@@ -655,8 +671,10 @@ async function tangani(request, env) {
     if (USER.peran !== 'admin') return j({ ok: false, error: 'khusus admin' }, 403);
     const galat = (await DB.prepare('SELECT * FROM galat ORDER BY id DESC LIMIT 50').all()).results || [];
     const stat = {};
+    // fix K1: try/catch per tabel — DB lama yang belum punya tabel v2 tidak lagi membuat seluruh endpoint 500
     for (const t of ['jamaah', 'titik', 'posisi', 'kejadian', 'absensi_event', 'latihan', 'deteksi', 'kawal_log', 'kawal_jamaah', 'users']) {
-      stat[t] = (await DB.prepare(`SELECT COUNT(*) c FROM ${t}`).first()).c;
+      try { stat[t] = (await DB.prepare(`SELECT COUNT(*) c FROM ${t}`).first()).c; }
+      catch (e) { stat[t] = 0; }
     }
     return j({ ok: true, galat, stat });
   }
@@ -824,21 +842,23 @@ async function tangani(request, env) {
     
     // RSSI threshold (sangat lenient: -100 dBm = hampir semua deteksi = HADIR)
     const RSSI_THRESHOLD = -100;
-    const rssi = Number(b.rssi) || -100;
+    const rssi = Number.isFinite(Number(b.rssi)) ? Number(b.rssi) : -100;  // fix M20
     
     // Cari jamaah berdasarkan MAC
     const jm = await DB.prepare('SELECT * FROM jamaah WHERE mac_tag=?').bind(mac).first();
     const jamaahId = jm ? jm.id : null;
     
-    // Simpan ke tabel deteksi
-    await DB.prepare('INSERT INTO deteksi (mac_tag, jamaah_id, device_id, rssi, sumber, waktu) VALUES (?,?,?,?,?,?)')
-      .bind(mac, jamaahId, b.device_id || '', rssi, b.sumber || 'native', nowISO()).run();
+    // Simpan ke tabel deteksi (fix M19: lat/lng dari native kini ikut tersimpan)
+    const latD = Number.isFinite(Number(b.lat)) ? Number(b.lat) : null;
+    const lngD = Number.isFinite(Number(b.lng)) ? Number(b.lng) : null;
+    await DB.prepare('INSERT INTO deteksi (mac_tag, jamaah_id, device_id, lat, lng, rssi, sumber, waktu) VALUES (?,?,?,?,?,?,?,?)')
+      .bind(mac, jamaahId, b.device_id || '', latD, lngD, rssi, b.sumber || 'native', nowISO()).run();
     
-    // Jika jamaah ditemukan, cek absensi (LANGSUNG HADIR jika RSSI > threshold)
+    // Jika jamaah ditemukan, cek absensi (LANGSUNG HADIR jika RSSI >= threshold)
     if (jm) {
       // Cek absensi aktif
       const ev = await DB.prepare('SELECT * FROM absensi_event WHERE ditutup=0 ORDER BY waktu DESC LIMIT 1').first();
-      if (ev && rssi > RSSI_THRESHOLD) {
+      if (ev && rssi >= RSSI_THRESHOLD) {
         // Gelang terdeteksi dalam range → LANGSUNG HADIR (tanpa GPS check!)
         await DB.prepare('INSERT OR IGNORE INTO absensi (event_id, jamaah_id, status, sumber, waktu, oleh) VALUES (?,?,?,?,?,?)')
           .bind(ev.id, jm.id, 'hadir', 'gelang', nowISO(), 'radar').run();
@@ -888,10 +908,15 @@ async function tangani(request, env) {
     }
     
     // Update jamaah yang TIDAK terdeteksi → JAUH
-    const semuaJamaahRegu = await DB.prepare('SELECT j.* FROM jamaah j WHERE j.regu=?')
-      .bind(rombonganId.replace('regu-', '')).all();
+    // fix M3: cocokkan nama regu apa adanya ATAU tanpa prefiks 'regu-' (web mengirim NAMA regu, native bisa mengirim id)
+    const kandidatRegu = [...new Set([rombonganId, rombonganId.replace(/^regu-/i, '')])].filter(Boolean);
+    let semuaJamaahRegu = [];
+    for (const k of kandidatRegu) {
+      const r = await DB.prepare('SELECT j.* FROM jamaah j WHERE j.regu=?').bind(k).all();
+      if ((r.results || []).length) { semuaJamaahRegu = r.results; break; }
+    }
     
-    for (const jm of (semuaJamaahRegu.results || [])) {
+    for (const jm of semuaJamaahRegu) {
       if (jm.mac_tag && !macTerdeteksi.has(jm.mac_tag)) {
         const existing = await DB.prepare('SELECT id, terakhir_terdeteksi FROM kawal_jamaah WHERE rombongan_id=? AND jamaah_id=?')
           .bind(rombonganId, jm.id).first();

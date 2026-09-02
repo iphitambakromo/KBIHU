@@ -15,6 +15,11 @@ export default function AbsensiPage() {
   const [radarAktif, setRadarAktif] = useState(false);
   const sudahHadirRef = useRef(new Set());
   const macMapRef = useRef({}); // {mac: {nama, regu}}
+  /* fix S1: ref utk nilai `aktif` terbaru di dalam interval (dulu stale closure = null
+     membuat interval pollDeteksi bunuh diri di tick pertama) */
+  const aktifRef = useRef(null);
+  const intervalRef = useRef(null);
+  useEffect(() => { aktifRef.current = aktif; }, [aktif]);
 
   const muatAktif = useCallback(async () => {
     const d = await api('/api/absensi/aktif');
@@ -93,7 +98,7 @@ export default function AbsensiPage() {
   // Start radar BLE
   const startRadar = () => {
     if (isNativeApp()) {
-      const serverUrl = localStorage.getItem('iphi_server_url') || 'https://kbihu.iphi-haji.workers.dev';
+      const serverUrl = localStorage.getItem('iphi_server_url') || location.origin;
       const rombonganId = localStorage.getItem('iphi_rombongan') || '';
       startBLE(serverUrl, rombonganId, {
         onDetected: (mac, rssi, name) => {
@@ -108,7 +113,7 @@ export default function AbsensiPage() {
               tampilDeteksi(name || mac, '');
             }
           }
-          muatRekap(aktif?.id);
+          muatRekap(aktifRef.current?.id);
         },
         onStatus: (status) => console.log('[Absensi] Status:', status)
       });
@@ -121,8 +126,9 @@ export default function AbsensiPage() {
 
   // Poll deteksi dari server (untuk browser)
   const pollDeteksi = () => {
-    const interval = setInterval(async () => {
-      if (!aktif) { clearInterval(interval); return; }
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(async () => {
+      if (!aktifRef.current) return;  // tunggu acara aktif — JANGAN matikan interval (fix S1)
       try {
         const d = await api('/api/pub/deteksi-terbaru?limit=5');
         if (d.ok && d.deteksi) {
@@ -134,7 +140,7 @@ export default function AbsensiPage() {
             }
           }
         }
-        muatRekap(aktif?.id);
+        muatRekap(aktifRef.current?.id);
       } catch (e) {}
     }, 3000);
   };
@@ -142,9 +148,16 @@ export default function AbsensiPage() {
   // Stop radar
   const stopRadar = () => {
     if (isNativeApp()) stopBLE();
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
     setRadarAktif(false);
     sudahHadirRef.current.clear();
   };
+
+  // fix S1: bersihkan radar/interval saat meninggalkan halaman (dulu BLE native & interval terus jalan)
+  useEffect(() => () => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (isNativeApp()) { try { stopBLE(); } catch (e) {} }
+  }, []);
 
   const mulai = async () => {
     if (!pilihTitik) { tampilToast('Pilih titik kumpul acara ini dulu', true); return; }

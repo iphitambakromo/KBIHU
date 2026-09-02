@@ -11,11 +11,20 @@ let cache = null;
 let nativeGpsActive = false;
 let lastNativePos = null;
 
+/* fix K4: satu penerima GPS native — perbarui cache DAN teruskan ke hook per-halaman
+   (_kawalGpsUpdate, _radarGpsUpdate, _latihanGpsUpdate) yang dulu tidak pernah dipanggil siapa pun. */
+export function terimaGpsNative(lat, lng, accuracy) {
+  lastNativePos = { lat, lng, akurasi: accuracy, waktu: Date.now() };
+  cache = lastNativePos;
+  try { if (typeof window._kawalGpsUpdate === 'function') window._kawalGpsUpdate(lat, lng); } catch (e) {}
+  try { if (typeof window._radarGpsUpdate === 'function') window._radarGpsUpdate(lat, lng); } catch (e) {}
+  try { if (typeof window._latihanGpsUpdate === 'function') window._latihanGpsUpdate(lat, lng, accuracy); } catch (e) {}
+}
+
 // Callback untuk GPS dari native
 if (typeof window !== 'undefined') {
   window.onGPSUpdate = (lat, lng, accuracy) => {
-    lastNativePos = { lat, lng, akurasi: accuracy, waktu: Date.now() };
-    cache = lastNativePos;
+    terimaGpsNative(lat, lng, accuracy);
     console.log('[GPS] Native update:', lat, lng, accuracy);
   };
 }
@@ -117,10 +126,7 @@ export function mulaiGPSTracking(serverUrl, deviceId) {
   if (isNativeApp()) {
     console.log('[GPS] Starting native GPS tracking');
     nativeStartGPS(serverUrl, deviceId, {
-      onUpdate: (lat, lng, accuracy) => {
-        lastNativePos = { lat, lng, akurasi: accuracy, waktu: Date.now() };
-        cache = lastNativePos;
-      }
+      onUpdate: (lat, lng, accuracy) => terimaGpsNative(lat, lng, accuracy)
     });
     nativeGpsActive = true;
     return { ok: true, mode: 'native' };

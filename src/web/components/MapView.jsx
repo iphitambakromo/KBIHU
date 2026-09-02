@@ -217,6 +217,9 @@ export default function MapView() {
     const nama = prompt('Nama titik kumpul:', `Titik Kumpul ${waktu}`);
     if (nama === null) return;
     const pos = await bacaGPS(12000, true);
+    /* fix K7: jangan buat titik dari koordinat fallback (GPS gagal) — dulu titik bisa tercipta
+       di koordinat default walau jamaah ada di lokasi lain */
+    if (pos.fallback) { tampilToast('⚠️ GPS belum tersedia — pindah ke tempat terbuka, aktifkan lokasi, lalu coba lagi', true); return; }
     const d = await api('/api/titik', { method: 'POST', body: JSON.stringify({ lat: pos.lat, lng: pos.lng, radius: 100, tipe: 'kumpul', nama: nama.trim(), sumber: 'cepat' }) });
     if (d.ok) {
       muat();

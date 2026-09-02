@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { useApp } from '../App.jsx';
 import { waLink, tampilkanHp } from '../lib/wa.js';
+import { isNativeApp, bunyikanGelang as nativeBunyikan } from '../lib/nativeBridge.js';
 
 /* Daftar jamaah sesuai user (karu = regunya sendiri, karom/admin = semua —
    sudah difilter server via /api/state). Klik nama / tombol 💬 = langsung
    WhatsApp ke no. HP jamaah. */
 export default function JamaahPage() {
-  const { state, sesi } = useApp();
+  const { state, sesi, tampilToast } = useApp();
   const [cari, setCari] = useState('');
   const [bunyiCooldown, setBunyiCooldown] = useState({});
 
@@ -25,6 +26,15 @@ export default function JamaahPage() {
     
     setBunyiCooldown(prev => ({ ...prev, [m.id]: true }));
     setTimeout(() => setBunyiCooldown(prev => ({ ...prev, [m.id]: false })), 5000);
+    
+    /* fix M13: mode native → pakai bridge dengan MAC terdaftar (bukan pemilih device buta) */
+    if (isNativeApp()) {
+      if (m.mac_tag) { nativeBunyikan(m.mac_tag); tampilToast(`🔊 Membunyikan gelang ${m.nama}…`); }
+      else tampilToast('⚠️ MAC gelang belum diisi — isi dulu di Kelola Jamaah (✏️)', true);
+      return;
+    }
+    /* fix M13: guard browser tanpa Web Bluetooth (dulu error senyap) */
+    if (!navigator.bluetooth?.requestDevice) { tampilToast('⚠️ Browser tidak mendukung Bluetooth — gunakan IPHI App', true); return; }
     
     try {
       const device = await navigator.bluetooth.requestDevice({
