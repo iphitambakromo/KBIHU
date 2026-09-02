@@ -15,6 +15,11 @@ import com.google.android.gms.location.*
 import com.iphi.IphiApp
 import com.iphi.R
 import com.iphi.webview.MainActivity
+import kotlinx.coroutines.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
 
 class GpsService : Service() {
     companion object {
@@ -22,11 +27,16 @@ class GpsService : Service() {
         private const val NOTIFICATION_ID = 1002
         private const val UPDATE_INTERVAL = 5_000L    // 5 detik
         private const val FASTEST_INTERVAL = 3_000L   // 3 detik minimum
+        private const val POST_INTERVAL = 15_000L     // fix S9: kirim posisi ke server maks tiap 15 detik
+        private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 
     private lateinit var fusedClient: FusedLocationProviderClient
     private lateinit var locationCallback: LocationCallback
     private val binder = GpsBinder()
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val httpClient = OkHttpClient()
+    private var lastPost = 0L
 
     var onLocationUpdate: ((Double, Double, Float) -> Unit)? = null
     var serverUrl = ""
@@ -50,8 +60,29 @@ class GpsService : Service() {
                     val acc = loc.accuracy
                     Log.d(TAG, "GPS: $lat, $lng (±${acc}m)")
                     onLocationUpdate?.invoke(lat, lng, acc)
+                    kirimPosisiKeServer(lat, lng, acc)   // fix S9
                 }
             }
+        }
+    }
+
+    /* fix S9: DULU GpsService tidak pernah mengirim apa pun ke server — fitur
+       "background GPS tracking" (POST /api/pub/posisi) mati total. Kini posisi device
+       pengawal dikirim (throttle 15 detik) selama service berjalan. */
+    private fun kirimPosisiKeServer(lat: Double, lng: Double, acc: Float) {
+        val now = System.currentTimeMillis()
+        if (serverUrl.isEmpty() || now - lastPost < POST_INTERVAL) return
+        lastPost = now
+        scope.launch {
+            try {
+                val json = org.json.JSONObject().apply {
+                    put("lat", lat); put("lng", lng)
+                    put("akurasi", acc.toInt()); put("device_id", deviceId)
+                }.toString()
+                val req = Request.Builder().url("$serverUrl/api/pub/posisi")
+                    .post(RequestBody.create(JSON_TYPE, json)).build()
+                httpClient.newCall(req).execute().use { }
+            } catch (e: Exception) { Log.e(TAG, "Gagal kirim posisi", e) }
         }
     }
 
@@ -106,6 +137,7 @@ class GpsService : Service() {
 
     override fun onDestroy() {
         stopTracking()
+        scope.cancel()
         super.onDestroy()
     }
 }

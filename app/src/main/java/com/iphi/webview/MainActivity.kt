@@ -44,6 +44,10 @@ class MainActivity : AppCompatActivity() {
     private var lastAcc = 0f
     private var gpsCount = 0
     private var pageLoaded = false
+    /* fix K9: startGpsDirect() bisa dipanggil berkali-kali (onCreate, hasil izin, bridge startGPS) —
+       tanpa guard ini LocationCallback & loop push 2 detik menumpuk (baterai boros, JS banjir) */
+    private var gpsDirectStarted = false
+    private var directLocCallback: LocationCallback? = null
 
     private val bleConn = object : ServiceConnection {
         override fun onServiceConnected(n: ComponentName?, s: IBinder?) {
@@ -108,6 +112,11 @@ class MainActivity : AppCompatActivity() {
             Log.w(TAG, "GPS permission not granted")
             return
         }
+        if (gpsDirectStarted) {   // fix K9: jangan daftar ulang callback & loop push
+            Log.d(TAG, "Direct GPS already started — skip")
+            return
+        }
+        gpsDirectStarted = true
         Log.d(TAG, "Starting direct GPS...")
 
         // 1. Last known location (instant, mungkin null)
@@ -136,7 +145,7 @@ class MainActivity : AppCompatActivity() {
             .setWaitForAccurateLocation(false)  // ← FIX: false supaya langsung dapat lokasi
             .build()
 
-        fusedClient.requestLocationUpdates(req, object : LocationCallback() {
+        directLocCallback = object : LocationCallback() {
             override fun onLocationResult(r: LocationResult) {
                 r.lastLocation?.let { loc ->
                     // BUG FIX: hapus filter akurasi yang terlalu ketat
@@ -144,7 +153,8 @@ class MainActivity : AppCompatActivity() {
                     updateGps(loc.latitude, loc.longitude, loc.accuracy, "realtime")
                 }
             }
-        }, Looper.getMainLooper())
+        }
+        fusedClient.requestLocationUpdates(req, directLocCallback!!, Looper.getMainLooper())
 
         // 4. Periodic push ke WebView (backup setiap 2 detik)
         // BUG FIX: mulai lebih cepat (2 detik, bukan 5 detik)
@@ -279,6 +289,16 @@ class MainActivity : AppCompatActivity() {
                 Log.d(TAG, "JS: ${m?.message()}")
                 return true
             }
+            /* fix K5: TANPA override ini, permintaan navigator.geolocation dari web app
+               DITOLAK diam-diam di WebView → check-in/SOS/latihan mode browser gagal.
+               Izin lokasi Android sudah diminta native di requestPermissions(). */
+            override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback?) {
+                val granted = ContextCompat.checkSelfPermission(
+                    this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+                Log.d(TAG, "Web geolocation request from $origin → granted=$granted")
+                callback?.invoke(origin, granted, false)
+            }
         }
         webView.addJavascriptInterface(WebAppInterface(), "Android")
     }
@@ -386,7 +406,14 @@ class MainActivity : AppCompatActivity() {
         fun getDeviceInfo(): String {
             val devId = getSharedPreferences(IphiApp.PREFS_NAME, MODE_PRIVATE)
                 .getString(IphiApp.PREF_DEVICE_ID, Build.MODEL) ?: Build.MODEL
-            return """{"deviceId":"$devId","model":"${Build.MODEL}","manufacturer":"${Build.MANUFACTURER}","sdk":${Build.VERSION.SDK_INT}}"""
+            /* fix M17: JSON dibangun via JSONObject — versi string-template rusak bila
+               model/manufacturer mengandung tanda kutip */
+            return org.json.JSONObject().apply {
+                put("deviceId", devId)
+                put("model", Build.MODEL)
+                put("manufacturer", Build.MANUFACTURER)
+                put("sdk", Build.VERSION.SDK_INT)
+            }.toString()
         }
 
         @JavascriptInterface
@@ -419,7 +446,7 @@ class MainActivity : AppCompatActivity() {
         fun hasGPS(): Boolean = lastLat != 0.0 && lastLng != 0.0
 
         @JavascriptInterface
-        fun getVersion(): String = "3.4.1"
+        fun getVersion(): String = "3.4.0"   // fix M17: samakan dengan versionName di build.gradle
 
         @JavascriptInterface
         fun reload() {
@@ -538,6 +565,10 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         if (isBleBound) unbindService(bleConn)
         if (isGpsBound) unbindService(gpsConn)
+        // fix K9: lepas callback GPS activity (service background tetap jalan)
+        try { directLocCallback?.let { fusedClient.removeLocationUpdates(it) } } catch (e: Exception) {}
+        directLocCallback = null
+        gpsDirectStarted = false
         webView.destroy()
     }
 }

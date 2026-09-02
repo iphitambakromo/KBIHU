@@ -41,6 +41,11 @@ class BleService : Service() {
     private var scanner: BluetoothLeScanner? = null
     private var isScanning = false
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    /* fix K8: loop scan disimpan sebagai job terpisah — stopScanning tidak lagi membatalkan
+       seluruh scope (dulu scope.cancel() membuat start/stop berikutnya mati total & senyap) */
+    private var kawalJob: Job? = null
+    private var bersihJob: Job? = null
+    private var lastNotifUpdate = 0L   // fix S6: throttle notifikasi
     private val httpClient = OkHttpClient()
     private val gson = Gson()
     
@@ -79,7 +84,11 @@ class BleService : Service() {
         super.onCreate()
         val bm = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         scanner = bm.adapter?.bluetoothLeScanner
-        deviceId = "${Build.MANUFACTURER}_${Build.MODEL}_${Build.SERIAL ?: System.currentTimeMillis()}"
+        /* fix S7: pakai deviceId persisten dari IphiApp (unik per instalasi).
+           Dulu memakai Build.SERIAL yang selalu "unknown" di API 26+ → semua HP model sama identik. */
+        deviceId = getSharedPreferences(IphiApp.PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(IphiApp.PREF_DEVICE_ID, null)
+            ?: "${Build.MANUFACTURER}_${Build.MODEL}_${System.currentTimeMillis()}"
         loadMacCache()
     }
 
@@ -132,14 +141,14 @@ class BleService : Service() {
         try {
             scanner?.startScan(null, settings, scanCallback)
             
-            scope.launch {
+            kawalJob = scope.launch {
                 while (isScanning) {
                     delay(KAWAL_INTERVAL)
                     kirimDataKawal()
                 }
             }
             
-            scope.launch {
+            bersihJob = scope.launch {
                 while (isScanning) {
                     delay(60_000)
                     val now = System.currentTimeMillis()
@@ -156,7 +165,9 @@ class BleService : Service() {
     private fun stopScanning() {
         isScanning = false
         try { scanner?.stopScan(scanCallback) } catch (e: Exception) {}
-        scope.cancel()
+        /* fix K8: batalkan hanya job loop scan — scope tetap hidup untuk start berikutnya */
+        kawalJob?.cancel(); kawalJob = null
+        bersihJob?.cancel(); bersihJob = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -224,29 +235,35 @@ class BleService : Service() {
         Log.d(TAG, "Connecting to $address...")
         onStatusChanged?.invoke("🔗 Menghubungkan ke ${device.name ?: address}...")
         
+        /* fix S4: referensi gatt dipegang di luar coroutine — bila koneksi timeout,
+           handle tetap di-disconnect/close (dulu bocor; Android membatasi ±32 GATT client) */
         var gatt: BluetoothGatt? = null
         try {
-            gatt = withTimeout(10_000) {
-                suspendCancellableCoroutine { cont ->
+            withTimeout(10_000) {
+                suspendCancellableCoroutine<Unit> { cont ->
                     val cb = object : BluetoothGattCallback() {
                         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
                             if (newState == BluetoothProfile.STATE_CONNECTED) {
                                 g.discoverServices()
                             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                                if (cont.isActive) cont.resume(g) {}
+                                if (cont.isActive) cont.resume(Unit) {}
                             }
                         }
                         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
                             if (status == BluetoothGatt.GATT_SUCCESS) {
                                 val svc = g.getService(UUID.fromString(FFE0_SERVICE))
                                 val chr = svc?.getCharacteristic(UUID.fromString(FFE3_CHAR))
-                                if (chr != null) g.readCharacteristic(chr)
-                                else if (cont.isActive) cont.resume(g) {}
-                            } else if (cont.isActive) cont.resume(g) {}
+                                if (chr != null) {
+                                    @Suppress("DEPRECATION")
+                                    g.readCharacteristic(chr)
+                                } else if (cont.isActive) cont.resume(Unit) {}
+                            } else if (cont.isActive) cont.resume(Unit) {}
                         }
                         override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
-                            if (status == BluetoothGatt.GATT_SUCCESS && c.value?.size == 6) {
-                                val mac = c.value.joinToString(":") { String.format("%02X", it) }
+                            @Suppress("DEPRECATION")
+                            val nilai = c.value
+                            if (status == BluetoothGatt.GATT_SUCCESS && nilai?.size == 6) {
+                                val mac = nilai.joinToString(":") { String.format("%02X", it) }
                                 Log.d(TAG, "Real MAC: $mac")
                                 macCache[address] = mac
                                 saveMacCache()
@@ -259,10 +276,10 @@ class BleService : Service() {
                                     scope.launch { kirimDeteksi(detectedDevices[address]!!) }
                                 }
                             }
-                            if (cont.isActive) cont.resume(g) {}
+                            if (cont.isActive) cont.resume(Unit) {}
                         }
                     }
-                    device.connectGatt(this@BleService, false, cb)
+                    gatt = device.connectGatt(this@BleService, false, cb)
                 }
             }
         } catch (e: Exception) {
@@ -286,7 +303,9 @@ class BleService : Service() {
             ))
             val body = RequestBody.create(JSON_TYPE, json)
             val req = Request.Builder().url("$serverUrl/api/pub/deteksi").post(body).build()
-            httpClient.newCall(req).execute()
+            httpClient.newCall(req).execute().use { resp ->   // fix S5: response ditutup (dulu bocor)
+                if (!resp.isSuccessful) Log.w(TAG, "deteksi HTTP ${resp.code}")
+            }
         } catch (e: Exception) { Log.e(TAG, "Gagal kirim deteksi", e) }
     }
 
@@ -306,41 +325,71 @@ class BleService : Service() {
             ))
             val body = RequestBody.create(JSON_TYPE, json)
             val req = Request.Builder().url("$serverUrl/api/pub/kawal").post(body).build()
-            httpClient.newCall(req).execute()
+            httpClient.newCall(req).execute().use { resp ->   // fix S5: response ditutup (dulu bocor)
+                if (!resp.isSuccessful) Log.w(TAG, "kawal HTTP ${resp.code}")
+            }
         } catch (e: Exception) { Log.e(TAG, "Gagal kirim kawal", e) }
+    }
+
+    /* fix K6: versi lama memanggil getService() tepat setelah CONNECTED tanpa discoverServices()
+       → selalu null → gelang tidak pernah berbunyi (gagal senyap). Sekarang alurnya:
+       connect → discoverServices → onServicesDiscovered → tulis Alert Level (0x2A06).
+       Sekalian pakai API tulis Android 13+ (writeCharacteristic dengan writeType). */
+    @Suppress("DEPRECATION")
+    private fun tulisAlert(gatt: BluetoothGatt, chr: BluetoothGattCharacteristic, nilai: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(chr, byteArrayOf(nilai.toByte()), BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+        } else {
+            chr.value = byteArrayOf(nilai.toByte())
+            gatt.writeCharacteristic(chr)
+        }
+    }
+
+    private suspend fun konekSiapTulis(device: BluetoothDevice): BluetoothGatt? {
+        var gatt: BluetoothGatt? = null
+        try {
+            withTimeout(12_000) {
+                suspendCancellableCoroutine<Unit> { cont ->
+                    val cb = object : BluetoothGattCallback() {
+                        override fun onConnectionStateChange(g: BluetoothGatt, s: Int, ns: Int) {
+                            if (ns == BluetoothProfile.STATE_CONNECTED) g.discoverServices()
+                            else if (ns == BluetoothProfile.STATE_DISCONNECTED && cont.isActive) cont.resume(Unit) {}
+                        }
+                        override fun onServicesDiscovered(g: BluetoothGatt, s: Int) {
+                            if (cont.isActive) cont.resume(Unit) {}
+                        }
+                    }
+                    gatt = device.connectGatt(this@BleService, false, cb)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Gagal konek utk tulis: ${e.message}")
+            try { gatt?.disconnect(); gatt?.close() } catch (_: Exception) {}
+            return null
+        }
+        return gatt
     }
 
     suspend fun bunyikanGelang(targetMac: String) {
         for ((_, info) in detectedDevices) {
             if (info.realMac == targetMac || info.address == targetMac) {
+                var gattConn: BluetoothGatt? = null
                 try {
                     val device = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager)
                         .adapter.getRemoteDevice(info.address)
-                    val gattConn = withTimeout(8_000) {
-                        suspendCancellableCoroutine<BluetoothGatt> { cont ->
-                            device.connectGatt(this@BleService, false, object : BluetoothGattCallback() {
-                                override fun onConnectionStateChange(g: BluetoothGatt, s: Int, ns: Int) {
-                                    if (ns == BluetoothProfile.STATE_CONNECTED) {
-                                        if (cont.isActive) cont.resume(g) {}
-                                    }
-                                }
-                            })
-                        }
-                    }
-                    try {
-                        val svc = gattConn.getService(UUID.fromString(ALERT_SERVICE))
-                        val chr = svc?.getCharacteristic(UUID.fromString(ALERT_CHAR))
-                        if (chr != null) {
-                            chr.value = byteArrayOf(2)
-                            gattConn.writeCharacteristic(chr)
-                            delay(3000)
-                            chr.value = byteArrayOf(0)
-                            gattConn.writeCharacteristic(chr)
-                        }
-                    } finally {
-                        gattConn.disconnect(); gattConn.close()
+                    gattConn = konekSiapTulis(device)
+                    val svc = gattConn?.getService(UUID.fromString(ALERT_SERVICE))
+                    val chr = svc?.getCharacteristic(UUID.fromString(ALERT_CHAR))
+                    if (gattConn != null && chr != null) {
+                        tulisAlert(gattConn, chr, 2)
+                        delay(3000)
+                        tulisAlert(gattConn, chr, 0)
+                    } else {
+                        Log.w(TAG, "Karakteristik alert (0x2A06) tidak ditemukan di $targetMac")
+                        onStatusChanged?.invoke("⚠️ Tag tidak mendukung perintah bunyi")
                     }
                 } catch (e: Exception) { Log.e(TAG, "Gagal bunyikan", e) }
+                finally { try { gattConn?.disconnect(); gattConn?.close() } catch (e: Exception) {} }
                 break
             }
         }
@@ -350,24 +399,16 @@ class BleService : Service() {
         scope.launch {
             for ((_, info) in detectedDevices) {
                 if (info.realMac == targetMac || info.address == targetMac) {
+                    var gattConn: BluetoothGatt? = null
                     try {
                         val device = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager)
                             .adapter.getRemoteDevice(info.address)
-                        device.connectGatt(this@BleService, false, object : BluetoothGattCallback() {
-                            override fun onConnectionStateChange(g: BluetoothGatt, s: Int, ns: Int) {
-                                if (ns == BluetoothProfile.STATE_CONNECTED) {
-                                    try {
-                                        val svc = g.getService(UUID.fromString(ALERT_SERVICE))
-                                        val chr = svc?.getCharacteristic(UUID.fromString(ALERT_CHAR))
-                                        if (chr != null) {
-                                            chr.value = byteArrayOf(0)
-                                            g.writeCharacteristic(chr)
-                                        }
-                                    } finally { g.disconnect(); g.close() }
-                                }
-                            }
-                        })
-                    } catch (e: Exception) {}
+                        gattConn = konekSiapTulis(device)
+                        val svc = gattConn?.getService(UUID.fromString(ALERT_SERVICE))
+                        val chr = svc?.getCharacteristic(UUID.fromString(ALERT_CHAR))
+                        if (gattConn != null && chr != null) tulisAlert(gattConn, chr, 0)
+                    } catch (e: Exception) { Log.e(TAG, "Gagal stop bunyi", e) }
+                    finally { try { gattConn?.disconnect(); gattConn?.close() } catch (e: Exception) {} }
                     break
                 }
             }
@@ -388,6 +429,10 @@ class BleService : Service() {
     }
 
     private fun updateNotification() {
+        /* fix S6: throttle — dulu dipanggil tiap iklan BLE (bisa ratusan/detik) → spam & boros baterai */
+        val now = System.currentTimeMillis()
+        if (now - lastNotifUpdate < 5_000) return
+        lastNotifUpdate = now
         val count = detectedDevices.values.count { it.identified }
         val text = if (count > 0) "📡 $count gelang terdeteksi" else "🔍 Mencari gelang..."
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -396,6 +441,7 @@ class BleService : Service() {
 
     override fun onDestroy() {
         stopScanning()
+        scope.cancel()   // aman: hanya saat service benar-benar dihancurkan
         super.onDestroy()
     }
 }
