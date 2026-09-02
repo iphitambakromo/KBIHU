@@ -2,7 +2,7 @@ name: Build IPHI APK v3.4
 
 on:
   push:
-    branches: [ IPHI-v3.3, main ]
+    branches: [ IPHI-v3.3, main, perbaikan-bug-v3.3 ]
   workflow_dispatch:
 
 jobs:
