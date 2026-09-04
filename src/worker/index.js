@@ -438,22 +438,25 @@ async function tangani(request, env) {
     return j({ ok: true, jamaah: m.nama, absensi });
   }
 
-  /* publik: simpan posisi background tracking */
+  /* publik: simpan posisi background tracking — Fase 1: simpan device & rombongan, bukan hardcode 'background' */
   if (path === '/api/pub/posisi' && method === 'POST') {
     const b = await request.json().catch(() => ({}));
     if (!Number.isFinite(b.lat) || !Number.isFinite(b.lng)) return j({ ok: false, error: 'koordinat diperlukan' }, 400);
-    
-    // Simpan posisi ke tabel posisi (tanpa jamaah_id, untuk tracking umum)
-    await DB.prepare('INSERT INTO posisi (sesi_id, jamaah_id, lat, lng, akurasi, sumber, waktu) VALUES (?,?,?,?,?,?,?)')
-      .bind('trk1', 'background', b.lat, b.lng, b.akurasi || 20, 'background', nowISO()).run();
-    
-    return j({ ok: true });
+    // Tolak koordinat nol (bug #1: prevent menampilkan 0,0 sebagai lokasi)
+    if (Math.abs(b.lat) < 0.0001 && Math.abs(b.lng) < 0.0001) return j({ ok: false, error: 'koordinat tidak sahih (0,0)' }, 400);
+    const devId = String(b.device_id || 'background').slice(0, 120);
+    await DB.prepare('INSERT INTO posisi (sesi_id, jamaah_id, lat, lng, akurasi, sumber, waktu, device_id, rombongan_id) VALUES (?,?,?,?,?,?,?,?,?)')
+      .bind('trk1', 'background', b.lat, b.lng, b.akurasi || 20, 'background', nowISO(), devId, String(b.rombongan_id || '').slice(0, 40)).run();
+    return j({ ok: true, device: devId });
   }
 
-  /* publik: ambil riwayat posisi */
+  /* publik: ambil riwayat posisi (per-device opsional, agar 1–2 HP live location terpisah) */
   if (path === '/api/pub/riwayat-posisi' && method === 'GET') {
-    const limit = Number(url.searchParams.get('limit')) || 100;
-    const rows = (await DB.prepare('SELECT * FROM posisi WHERE jamaah_id=? ORDER BY id DESC LIMIT ?').bind('background', limit).all()).results || [];
+    const limit = Math.min(Number(url.searchParams.get('limit')) || 100, 500);
+    const dev = url.searchParams.get('device') || '';
+    const rows = dev
+      ? (await DB.prepare('SELECT * FROM posisi WHERE device_id=? ORDER BY id DESC LIMIT ?').bind(dev, limit).all()).results || []
+      : (await DB.prepare('SELECT * FROM posisi WHERE jamaah_id=? ORDER BY id DESC LIMIT ?').bind('background', limit).all()).results || [];
     return j({ ok: true, posisi: rows });
   }
 
@@ -856,9 +859,12 @@ async function tangani(request, env) {
     const rombonganId = String(b.rombongan_id || '').trim();
     if (!rombonganId) return j({ ok: false, error: 'rombongan_id wajib' }, 400);
     
-    // Simpan log posisi rombongan (GPS device untuk visual peta)
+    // Simpan log posisi rombongan (GPS device untuk visual peta) — Fase 1: jangan simpan 0,0
+    const latKm = Number.isFinite(Number(b.lat)) ? Number(b.lat) : null;
+    const lngKm = Number.isFinite(Number(b.lng)) ? Number(b.lng) : null;
+    if (latKm !== null && lngKm !== null && Math.abs(latKm) < 0.0001 && Math.abs(lngKm) < 0.0001) { /* 0,0 = belum ada fix → simpan null */ }
     await DB.prepare('INSERT INTO kawal_log (rombongan_id, ketua_device, lat, lng, jumlah_deteksi, waktu) VALUES (?,?,?,?,?,?)')
-      .bind(rombonganId, b.device_id || '', b.lat || null, b.lng || null, (b.deteksi || []).length, nowISO()).run();
+      .bind(rombonganId, b.device_id || '', latKm, lngKm, (b.deteksi || []).length, nowISO()).run();
     
     // Update status tiap jamaah terdeteksi
     const deteksiList = b.deteksi || [];

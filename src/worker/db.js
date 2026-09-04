@@ -75,6 +75,9 @@ export async function skema(DB) {
   for (const q of SKEMA) await DB.prepare(q).run();
   await pastikanKolom(DB, 'users', 'foto', 'TEXT DEFAULT \'\'');
   await pastikanKolom(DB, 'jamaah', 'mac_tag', "TEXT DEFAULT ''");
+  // Fase 1: posisi per-device (agar 1–2 HP dapat dibedakan → dasar "live location")
+  await pastikanKolom(DB, 'posisi', 'device_id', "TEXT DEFAULT ''");
+  await pastikanKolom(DB, 'posisi', 'rombongan_id', "TEXT DEFAULT ''");
 }
 
 export async function seed(DB) {

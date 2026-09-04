@@ -33,6 +33,7 @@ export default function KawalPage() {
   const tickRef = useRef(null);
   const deteksiRef = useRef({}); // {jamaahId: timestampTerakhirDeteksi}
   const posisiRef = useRef({}); // {jamaahId: {lat, lng}} posisi terakhir terdeteksi
+  const alertIdsRef = useRef(new Set()); // Fase 1: hindari alert duplikat & getar berulang
 
   useEffect(() => {
     if (state?.jamaah) {
@@ -87,14 +88,23 @@ export default function KawalPage() {
     };
     cobaGps();
 
-    // Listen GPS update dari native
+    // Fase 1 (bug #11): native mengirim ke window.onGPSUpdate — dengarkan callback nyata,
+    // bukan hanya window._kawalGpsUpdate/_nativeLat sekali-baca. Ini yang membuat marker
+    // watcher & lingkaran radius bergerak live di peta.
     window._kawalGpsUpdate = (lat, lng) => updateMap(lat, lng);
+    window.onGPSUpdate = (lat, lng) => updateMap(lat, lng);
     return () => {
       window._kawalGpsUpdate = null;
+      window.onGPSUpdate = null;
       try { map.remove(); } catch {}
       mapRef.current = null;
     };
   }, []);
+
+  // Fase 1: bila radius diubah, perbarui lingkaran tanpa menunggu GPS berikutnya
+  useEffect(() => {
+    radiusCircleRef.current?.setRadius(radius);
+  }, [radius]);
 
   const updateMap = (lat, lng) => {
     userLat.current = lat;
@@ -217,6 +227,7 @@ export default function KawalPage() {
     setAlerts([]);
     deteksiRef.current = {};
     posisiRef.current = {};
+    alertIdsRef.current = new Set();
     setStatusMap({});
     setProgress({ terdeteksi: 0, total: jmList.length, persen: 0 });
 
@@ -234,17 +245,29 @@ export default function KawalPage() {
         const newStatus = {};
         const newAlerts = [];
 
-    // Update posisi dari server (gunakan posisi device untuk semua jamaah)
-    const devicePosisi = data.posisi;
-    if (devicePosisi && devicePosisi.lat && devicePosisi.lng) {
-      // Semua jamaah yang bersama = posisi device
-      (data.jamaah || []).forEach(j => {
-        if (j.status === 'bersama') {
-          posisiRef.current[j.id] = { lat: devicePosisi.lat, lng: devicePosisi.lng };
+        // Fase 1 (bug #3): sumber kebenaran alert = data.alert dari server (kawal_alert),
+        // bukan menghitung ulang di sisi klien (yang tidak konsisten lintas device).
+        const serverAlerts = (data.alert || []).map(a => ({
+          id: 'srv-' + a.id,
+          nama: a.jamaah || 'Jamaah',
+          tipe: a.tipe,
+          menit: a.durasi,
+          waktu: a.waktu ? new Date(a.waktu).toLocaleTimeString('id-ID') : '—'
+        }));
+
+        // Update posisi dari server: jamaah 'bersama' ditempatkan di koordinat watcher yang live.
+        // Fase 1 (bug #8): gunakan koordinat sahih (bukan 0,0); fallback ke RSSI hanya bila tanpa koordinat.
+        const devicePosisi = (data.posisi
+          && Number.isFinite(data.posisi.lat) && Number.isFinite(data.posisi.lng)
+          && Math.abs(data.posisi.lat) > 0.0001 && Math.abs(data.posisi.lng) > 0.0001)
+          ? data.posisi : null;
+        if (devicePosisi) {
+          (data.jamaah || []).forEach(j => {
+            if (j.status === 'bersama') {
+              posisiRef.current[j.id] = { lat: devicePosisi.lat, lng: devicePosisi.lng };
+            }
+          });
         }
-        // Untuk yang jauh, tetap gunakan posisi terakhir yang tersimpan
-      });
-    }
 
         // Proses status jamaah
         jmList.forEach(m => {
@@ -253,29 +276,8 @@ export default function KawalPage() {
             newStatus[m.id] = { status: 'menunggu', terakhir: null, rssi: null };
             return;
           }
-
           const status = serverJm.status || 'jauh';
-          const terakhir = serverJm.terakhir;
-
-          // Cek apakah sudah jauh > 3 menit
-          if (status === 'jauh' && terakhir) {
-            const menitTakTerlihat = (now - new Date(terakhir).getTime()) / 60000;
-            if (menitTakTerlihat > 3) {
-              newAlerts.push({
-                id: m.id,
-                nama: m.nama,
-                tipe: 'hilang',
-                menit: Math.round(menitTakTerlihat),
-                waktu: new Date().toLocaleTimeString('id-ID')
-              });
-            }
-          }
-
-          newStatus[m.id] = {
-            status,
-            terakhir,
-            rssi: serverJm.rssi
-          };
+          newStatus[m.id] = { status, terakhir: serverJm.terakhir, rssi: serverJm.rssi };
         });
 
         setStatusMap(newStatus);
@@ -286,17 +288,16 @@ export default function KawalPage() {
         setProgress({
           terdeteksi,
           total: jmList.length,
-          persen: Math.round((terdeteksi / jmList.length) * 100)
+          persen: jmList.length ? Math.round((terdeteksi / jmList.length) * 100) : 0
         });
 
-        // Alert + vibrate
-        if (newAlerts.length > 0) {
-          setAlerts(prev => [...prev, ...newAlerts]);
-          if (isNativeApp()) {
-            nativeVibrate('500,200,500,200,500');
-          } else if (navigator.vibrate) {
-            navigator.vibrate([500, 200, 500, 200, 500]);
-          }
+        // Fase 1 (bug #4): hanya tampilkan & getar untuk alert BARU (dedup), bukan tiap poll.
+        const fresh = serverAlerts.filter(a => !alertIdsRef.current.has(a.id));
+        fresh.forEach(a => alertIdsRef.current.add(a.id));
+        if (fresh.length > 0) {
+          setAlerts(prev => [...prev, ...fresh]);
+          if (isNativeApp()) nativeVibrate('500,200,500,200,500');
+          else if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 500]);
         }
       } catch (e) {
         console.error('[Kawal] Error polling:', e);
