@@ -215,6 +215,9 @@ class MainActivity : AppCompatActivity() {
         lastAcc = acc
         gpsCount++
         Log.d(TAG, "GPS #$gpsCount ($source): $lat, $lng (±${acc}m)")
+        // Fase 1 (bug #1): GPS langsung juga menyuburkan BleService, supaya /api/pub/kawal
+        // selalu mengirim posisi sahih (dulu hanya dari background GpsService → bisa 0,0).
+        try { bleService?.lastLat = lat; bleService?.lastLng = lng } catch (_: Exception) {}
         pushGpsToWebView()
     }
 

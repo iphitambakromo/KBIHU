@@ -51,6 +51,10 @@ class BleService : Service() {
     
     val detectedDevices = ConcurrentHashMap<String, DeviceInfo>()
     private val macCache = ConcurrentHashMap<String, String>()
+    /* Fase 1: peta terbalik realMAC → alamat iklan. Kunci untuk "bunyikan kapan saja"
+       seperti iSearching: kita bisa reconnect langsung via alamat yang tersimpan,
+       tanpa bergantung pada daftar scan (detectedDevices) yang dibersihkan tiap 120s. */
+    private val realMacToAddr = ConcurrentHashMap<String, String>()
     private val connectingDevices = ConcurrentHashMap<String, Boolean>()
     
     var serverUrl = ""
@@ -115,6 +119,8 @@ class BleService : Service() {
             val data = prefs.getString(IphiApp.PREF_MAC_CACHE, "{}") ?: "{}"
             val map = gson.fromJson(data, Map::class.java) as? Map<String, String> ?: emptyMap()
             macCache.putAll(map)
+            // Fase 1: bangun peta terbalik from cache
+            macCache.forEach { (addr, mac) -> realMacToAddr[mac] = addr }
             Log.d(TAG, "Loaded ${macCache.size} MAC cache")
         } catch (e: Exception) { Log.e(TAG, "Error loading cache", e) }
     }
@@ -266,6 +272,7 @@ class BleService : Service() {
                                 val mac = nilai.joinToString(":") { String.format("%02X", it) }
                                 Log.d(TAG, "Real MAC: $mac")
                                 macCache[address] = mac
+                                realMacToAddr[mac] = address   // Fase 1: agar bisa bunyikan kemudian
                                 saveMacCache()
                                 
                                 val existing = detectedDevices[address]
@@ -370,48 +377,65 @@ class BleService : Service() {
         return gatt
     }
 
-    suspend fun bunyikanGelang(targetMac: String) {
-        for ((_, info) in detectedDevices) {
-            if (info.realMac == targetMac || info.address == targetMac) {
-                var gattConn: BluetoothGatt? = null
-                try {
-                    val device = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager)
-                        .adapter.getRemoteDevice(info.address)
-                    gattConn = konekSiapTulis(device)
-                    val svc = gattConn?.getService(UUID.fromString(ALERT_SERVICE))
-                    val chr = svc?.getCharacteristic(UUID.fromString(ALERT_CHAR))
-                    if (gattConn != null && chr != null) {
-                        tulisAlert(gattConn, chr, 2)
-                        delay(3000)
-                        tulisAlert(gattConn, chr, 0)
-                    } else {
-                        Log.w(TAG, "Karakteristik alert (0x2A06) tidak ditemukan di $targetMac")
-                        onStatusChanged?.invoke("⚠️ Tag tidak mendukung perintah bunyi")
-                    }
-                } catch (e: Exception) { Log.e(TAG, "Gagal bunyikan", e) }
-                finally { try { gattConn?.disconnect(); gattConn?.close() } catch (e: Exception) {} }
-                break
+    /** Fase 1: cari device dari realMAC / alamat iklan — bekerja walau sedang tidak ter-scan.
+     *  Seperti iSearching: reconnect langsung via alamat yang tersimpan (realMacToAddr/macCache),
+     *  tidak bergantung pada detectedDevices (yang dibersihkan tiap 120s). */
+    private fun cariDevice(targetMac: String): DeviceInfo? {
+        val t = targetMac.trim().uppercase()
+        // 1) dari perangkat yang terdeteksi (live) berdasarkan realMac atau address
+        detectedDevices.values.firstOrNull { it.realMac?.equals(t, ignoreCase = true) == true || it.address.equals(t, ignoreCase = true) }
+            ?.let { return it }
+        // 2) dari peta terbalik realMac → address (persisten) → konek langsung
+        val addr = realMacToAddr[t] ?: macCache.entries.firstOrNull { it.value.equals(t, ignoreCase = true) }?.key
+        if (addr != null) {
+            detectedDevices[addr]?.let { return it }
+            return try {
+                val device = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager)
+                    .adapter.getRemoteDevice(addr)
+                DeviceInfo(addr, t, null, 0, System.currentTimeMillis(), true)
+            } catch (_: Exception) { null }
+        }
+        return null
+    }
+
+    /** Fase 1: tulis Alert Level (0x2A06) dengan umpan balik → tidak lagi gagal senyap. */
+    private suspend fun tulisAlertLevel(info: DeviceInfo, level: Int): Boolean {
+        var gattConn: BluetoothGatt? = null
+        return try {
+            val device = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager)
+                .adapter.getRemoteDevice(info.address)
+            gattConn = konekSiapTulis(device)
+            val svc = gattConn?.getService(UUID.fromString(ALERT_SERVICE))
+            val chr = svc?.getCharacteristic(UUID.fromString(ALERT_CHAR))
+            if (gattConn != null && chr != null) {
+                tulisAlert(gattConn, chr, level)
+                true
+            } else {
+                Log.w(TAG, "Karakteristik alert (0x2A06) tidak ditemukan di ${info.address}")
+                onStatusChanged?.invoke("⚠️ ${info.address} tidak mendukung perintah bunyi")
+                false
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Gagal tulis alert", e)
+            onStatusChanged?.invoke("⚠️ Gagal konek ke gelang ${info.address}: ${e.message}")
+            false
+        } finally { try { gattConn?.disconnect(); gattConn?.close() } catch (e: Exception) {} }
+    }
+
+    suspend fun bunyikanGelang(targetMac: String) {
+        val info = cariDevice(targetMac)
+        if (info == null) { onStatusChanged?.invoke("⚠️ Gelang $targetMac tidak dikenal"); return }
+        onStatusChanged?.invoke("🔊 Bunyikan ${info.address}...")
+        if (tulisAlertLevel(info, 2)) {
+            delay(3000)
+            tulisAlertLevel(info, 0)
         }
     }
 
     fun stopBeeping(targetMac: String) {
         scope.launch {
-            for ((_, info) in detectedDevices) {
-                if (info.realMac == targetMac || info.address == targetMac) {
-                    var gattConn: BluetoothGatt? = null
-                    try {
-                        val device = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager)
-                            .adapter.getRemoteDevice(info.address)
-                        gattConn = konekSiapTulis(device)
-                        val svc = gattConn?.getService(UUID.fromString(ALERT_SERVICE))
-                        val chr = svc?.getCharacteristic(UUID.fromString(ALERT_CHAR))
-                        if (gattConn != null && chr != null) tulisAlert(gattConn, chr, 0)
-                    } catch (e: Exception) { Log.e(TAG, "Gagal stop bunyi", e) }
-                    finally { try { gattConn?.disconnect(); gattConn?.close() } catch (e: Exception) {} }
-                    break
-                }
-            }
+            val info = cariDevice(targetMac) ?: return@launch
+            if (tulisAlertLevel(info, 0)) onStatusChanged?.invoke("🔇 Stop ${info.address}")
         }
     }
 
