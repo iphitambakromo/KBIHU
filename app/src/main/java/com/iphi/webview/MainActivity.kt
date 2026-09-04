@@ -449,7 +449,7 @@ class MainActivity : AppCompatActivity() {
         fun hasGPS(): Boolean = lastLat != 0.0 && lastLng != 0.0
 
         @JavascriptInterface
-        fun getVersion(): String = "3.4.0"   // fix M17: samakan dengan versionName di build.gradle
+        fun getVersion(): String = "3.4.1"   // fix M17: samakan dengan versionName di build.gradle
 
         @JavascriptInterface
         fun reload() {

@@ -11,8 +11,8 @@ android {
         applicationId = "com.iphi"
         minSdk = 26
         targetSdk = 34
-        versionCode = 340
-        versionName = "3.4.0"
+        versionCode = 341
+        versionName = "3.4.1"
     }
 
     buildTypes {
